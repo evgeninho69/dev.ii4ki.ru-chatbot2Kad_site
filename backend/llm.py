@@ -1,7 +1,18 @@
 # -*- coding: utf-8 -*-
-"""Клиент AnyModel API для 2KAD-чатбота.
+"""Клиент Mistral AI API для 2KAD-чатбота.
 
-Стрит OpenAI-совместимый chat/completions.
+Использует OpenAI-совместимый endpoint: https://api.mistral.ai/v1/chat/completions.
+
+Поддерживает:
+- Streaming (SSE)
+- Одновременное использование основной и резервной модели (fallback)
+- Безопасное чтение полного тела запроса перед парсингом (работает с провайдерами,
+  которые шлют chunks без terminating [DONE] сигнала)
+- Без reasoning_content (Mistral его не отдаёт — фильтр CoT оставлен как защита)
+
+Переменные окружения:
+- MISTRAL_API_KEY  — обязательно
+- MISTRAL_MODEL    — модель (по умолчанию mistral-small-latest)
 """
 from __future__ import annotations
 
@@ -13,24 +24,27 @@ import httpx
 
 
 class AnyModelClient:
-    BASE_URL = "https://anymodel.org/v1"
-    DEFAULT_MODEL = "am/gpt-oss-20b"
-    FALLBACK_MODEL = "am/nemotron-3.5-lightning-30b-a3b"
+    """Backward-compat имя класса. Использует Mistral API."""
+
+    BASE_URL = "https://api.mistral.ai/v1"
+    DEFAULT_MODEL = "mistral-small-latest"
+    FALLBACK_MODEL = "mistral-large-latest"
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
-        self.api_key = api_key or os.environ.get("ANYMODEL_API_KEY", "")
+        self.api_key = api_key or os.environ.get("MISTRAL_API_KEY", "")
         if not self.api_key:
             raise ValueError(
-                "ANYMODEL_API_KEY is required. "
-                "Get one at https://anymodel.org and put it in .env or env var."
+                "MISTRAL_API_KEY is required. "
+                "Get one at https://console.mistral.ai and put it in .env or env var."
             )
-        self.model = model or os.environ.get("ANYMODEL_MODEL", self.DEFAULT_MODEL)
+        self.model = model or os.environ.get("MISTRAL_MODEL", self.DEFAULT_MODEL)
         self.fallback_model = self.FALLBACK_MODEL
 
     def _headers(self) -> Dict[str, str]:
         return {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
+            "Accept": "application/json",
         }
 
     async def chat_stream(
@@ -41,16 +55,12 @@ class AnyModelClient:
         temperature: float = 0.3,
         fallback: bool = True,
     ) -> AsyncGenerator[Dict, None]:
-        """Стримит ответ. Yield'ит словари с ключами:
+        """Стримит ответ от Mistral. Yield'ит словари:
           - {"type": "content", "delta": "..."}
-          - {"type": "reasoning", "delta": "..."}
+          - {"type": "reasoning", "delta": "..."}     # всегда пустой для Mistral
           - {"type": "usage", "prompt_tokens": ..., "completion_tokens": ...}
           - {"type": "done"}
           - {"type": "error", "message": "..."}
-
-        Реализация: делаем обычный POST (stream=true), ждём полный ответ,
-        затем парсим SSE-чанки вручную и yield'им по очереди. Это надёжнее,
-        чем aiter_text — последний иногда не закрывает соединение после [DONE].
         """
         url = f"{self.BASE_URL}/chat/completions"
         payload = {
@@ -59,18 +69,12 @@ class AnyModelClient:
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": True,
-            # OpenAI-style: для reasoning-моделей просим короткий CoT
-            # (по умолчанию GPT-OSS 20B пишет развёрнутое рассуждение,
-            # которое при отсутствии reasoning_content канала протекает в content)
-            "reasoning_effort": "low",
         }
         used_fallback = False
         overall_timeout_s = 180
 
-        # Защита от «протекающего» CoT: некоторые провайдеры (особенно GPT-OSS 20B
-        # через AnyModel free) не отдают reasoning_content, а суют развёрнутое
-        # рассуждение прямо в content (вида "Here's a thinking process:\n1. ...").
-        # До начала «делового» ответа такие префиксы отбрасываем.
+        # Mistral не отдаёт reasoning_content — фильтр CoT оставляем как защиту
+        # от любых провайдерских префиксов в content.
         import re as _re
         _COT_PREFIX_RE = _re.compile(
             r"^(?:here'?s\s+(?:a\s+)?thinking\s+process[:：]?|"
@@ -82,11 +86,6 @@ class AnyModelClient:
             r"reasoning[:：]?)\s*",
             _re.IGNORECASE,
         )
-        # Состояние фильтра (per-stream): пока не нашли маркер ответа — копим.
-        # Триггер для выхода из CoT:
-        #   1) явно видим `**жирный**` (наш ответ всегда с bold по системному промпту)
-        #   2) видим `\n\n` после `1.\n` или `2.\n` (буллет → пустая строка → ответ)
-        #   3) длинный (>120) буфер с кириллицей и без нумерованных списков
         _state = {"in_cot": None, "buf": ""}
 
         try:
@@ -109,11 +108,10 @@ class AnyModelClient:
                     }
                     return
 
-                # Читаем полный текст
+                # Читаем полный текст (надёжнее, чем aiter_text с SSE-стримами)
                 full_text = resp.text
 
                 # Парсим SSE
-                buffer = ""
                 saw_done = False
                 had_error = False
                 for chunk in full_text.split("\n"):
@@ -149,12 +147,12 @@ class AnyModelClient:
                         break
                     for ch in obj.get("choices", []):
                         delta = ch.get("delta") or {}
+                        # Mistral не отдаёт reasoning_content, но оставляем на будущее
                         if delta.get("reasoning_content"):
                             yield {"type": "reasoning", "delta": delta["reasoning_content"]}
                         if delta.get("content"):
                             piece = delta["content"]
                             if _state["in_cot"] is None:
-                                # Первый контент — определяем, это CoT или сразу ответ
                                 if _COT_PREFIX_RE.match(piece):
                                     _state["in_cot"] = True
                                     _state["buf"] = _COT_PREFIX_RE.sub(
@@ -166,7 +164,6 @@ class AnyModelClient:
                                 continue
                             if _state["in_cot"]:
                                 _state["buf"] += piece
-                                # Жёсткие маркеры начала ответа
                                 if (
                                     "**" in _state["buf"]
                                     or "\n\n" in _state["buf"]
@@ -182,6 +179,7 @@ class AnyModelClient:
                                         yield {"type": "content", "delta": answer}
                                 continue
                             yield {"type": "content", "delta": piece}
+                    # Mistral присылает usage обычно в самом последнем чанке
                     if "usage" in obj and obj["usage"]:
                         u = obj["usage"] or {}
                         yield {
@@ -191,7 +189,6 @@ class AnyModelClient:
                         }
 
                 # Если стрим закончился, но мы так и в CoT — отдать хвост как content
-                # (лучше утечка CoT, чем полностью пустой ответ)
                 if _state["in_cot"] is True and _state["buf"].strip():
                     tail = _state["buf"].strip()
                     yield {"type": "content", "delta": tail}
