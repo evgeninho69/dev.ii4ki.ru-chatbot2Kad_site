@@ -396,6 +396,7 @@
   // Гарантирует, что SVG-анимация «размышления» видна минимум 600 мс.
   // Если LLM ответил мгновенно — ждём оставшееся время, иначе убираем сразу.
   function finishTyping() {
+    if (!typing) return;
     var elapsed = performance.now() - typingShownAt;
     var wait = Math.max(0, 600 - elapsed);
     if (wait === 0) {
@@ -424,6 +425,7 @@
   // Состояние текущего ответа ассистента (модульный scope — доступно из finishTyping)
   var currentAssistant = null;  // { wrap, bubble, meta }
   var typingShownAt = 0;         // момент показа «размышления» (ms)
+  var typing = null;             // { remove() } — ссылка на thinking-bubble (модульный)
 
   async function send() {
     var text = (input.value || "").trim();
@@ -432,7 +434,7 @@
     sendBtn.disabled = true;
     quick.innerHTML = "";
     addMsg("user", text);
-    var typing = showTyping();
+    typing = showTyping();
     currentAssistant = null;
     // Фиксируем момент показа — finishTyping() прочитает эту переменную
     typingShownAt = performance.now();
