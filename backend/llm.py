@@ -3,16 +3,14 @@
 
 Использует OpenAI-совместимый endpoint: https://api.mistral.ai/v1/chat/completions.
 
-Поддерживает:
-- Streaming (SSE)
-- Одновременное использование основной и резервной модели (fallback)
-- Безопасное чтение полного тела запроса перед парсингом (работает с провайдерами,
-  которые шлют chunks без terminating [DONE] сигнала)
-- Без reasoning_content (Mistral его не отдаёт — фильтр CoT оставлен как защита)
-
 Переменные окружения:
 - MISTRAL_API_KEY  — обязательно
-- MISTRAL_MODEL    — модель (по умолчанию mistral-small-latest)
+- MISTRAL_MODEL    — модель (по умолчанию ministral-8b-latest)
+
+Известные ограничения по тиру (проверено 2026-09-25):
+- ✓ ministral-8b-latest, ministral-3b-latest, open-mistral-7b, mistral-tiny
+- ✗ mistral-small-latest, mistral-large-latest → 403 «not in tier»
+- ⚠️ mistral-medium-latest → 429 «rate limit» (нагрузка растёт)
 """
 from __future__ import annotations
 
@@ -27,8 +25,8 @@ class AnyModelClient:
     """Backward-compat имя класса. Использует Mistral API."""
 
     BASE_URL = "https://api.mistral.ai/v1"
-    DEFAULT_MODEL = "mistral-small-latest"
-    FALLBACK_MODEL = "mistral-large-latest"
+    DEFAULT_MODEL = "ministral-8b-latest"
+    FALLBACK_MODEL = "mistral-tiny"
 
     def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
         self.api_key = api_key or os.environ.get("MISTRAL_API_KEY", "")
@@ -57,8 +55,8 @@ class AnyModelClient:
     ) -> AsyncGenerator[Dict, None]:
         """Стримит ответ от Mistral. Yield'ит словари:
           - {"type": "content", "delta": "..."}
-          - {"type": "reasoning", "delta": "..."}     # всегда пустой для Mistral
-          - {"type": "usage", "prompt_tokens": ..., "completion_tokens": ...}
+          - {"type": "reasoning", "delta": "..."}    # пусто для Mistral
+          - {"type": "usage", ...}
           - {"type": "done"}
           - {"type": "error", "message": "..."}
         """
@@ -71,10 +69,9 @@ class AnyModelClient:
             "stream": True,
         }
         used_fallback = False
-        overall_timeout_s = 180
+        overall_timeout_s = 60
 
-        # Mistral не отдаёт reasoning_content — фильтр CoT оставляем как защиту
-        # от любых провайдерских префиксов в content.
+        # CoT-фильтр (защита от провайдерских префиксов в content)
         import re as _re
         _COT_PREFIX_RE = _re.compile(
             r"^(?:here'?s\s+(?:a\s+)?thinking\s+process[:：]?|"
@@ -93,6 +90,16 @@ class AnyModelClient:
                 resp = await client.post(
                     url, headers=self._headers(), json=payload,
                 )
+                # 429 — rate limit: retry 1 раз через 1.5 сек
+                if resp.status_code == 429 and fallback and not used_fallback:
+                    import asyncio as _a
+                    await _a.sleep(1.5)
+                    async for ev in self.chat_stream(
+                        messages, model=model, fallback=fallback,
+                    ):
+                        yield ev
+                    return
+
                 if resp.status_code != 200:
                     err_body = resp.text
                     if fallback and not used_fallback:
@@ -108,10 +115,7 @@ class AnyModelClient:
                     }
                     return
 
-                # Читаем полный текст (надёжнее, чем aiter_text с SSE-стримами)
                 full_text = resp.text
-
-                # Парсим SSE
                 saw_done = False
                 had_error = False
                 for chunk in full_text.split("\n"):
@@ -147,7 +151,6 @@ class AnyModelClient:
                         break
                     for ch in obj.get("choices", []):
                         delta = ch.get("delta") or {}
-                        # Mistral не отдаёт reasoning_content, но оставляем на будущее
                         if delta.get("reasoning_content"):
                             yield {"type": "reasoning", "delta": delta["reasoning_content"]}
                         if delta.get("content"):
@@ -179,7 +182,6 @@ class AnyModelClient:
                                         yield {"type": "content", "delta": answer}
                                 continue
                             yield {"type": "content", "delta": piece}
-                    # Mistral присылает usage обычно в самом последнем чанке
                     if "usage" in obj and obj["usage"]:
                         u = obj["usage"] or {}
                         yield {
@@ -188,7 +190,6 @@ class AnyModelClient:
                             "completion_tokens": u.get("completion_tokens") or 0,
                         }
 
-                # Если стрим закончился, но мы так и в CoT — отдать хвост как content
                 if _state["in_cot"] is True and _state["buf"].strip():
                     tail = _state["buf"].strip()
                     yield {"type": "content", "delta": tail}
