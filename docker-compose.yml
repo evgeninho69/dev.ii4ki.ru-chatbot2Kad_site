@@ -1,0 +1,33 @@
+# docker-compose.yml для локальной разработки и теста
+# В Dokploy используется только Dockerfile (compose mode не нужен).
+#
+# Запуск:
+#   docker compose up --build
+#   curl http://localhost:8765/api/health
+
+services:
+  chatbot-2kad:
+    build: .
+    image: 2kad/chatbot:latest
+    container_name: chatbot-2kad
+    restart: unless-stopped
+    ports:
+      - "8765:8765"
+    environment:
+      # ── LLM ──
+      - ANYMODEL_API_KEY=${ANYMODEL_API_KEY}
+      - ANYMODEL_MODEL=${ANYMODEL_MODEL:-am/gpt-oss-20b}
+      - PORT=8765
+      # ── Runtime ──
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - PYTHONUNBUFFERED=1
+    volumes:
+      # Индекс сайта монтируется снаружи, чтобы не пересобирать образ
+      # при обновлении страниц на 2kad.ru
+      - ./backend/data:/app/backend/data:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8765/api/health', timeout=5).raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
