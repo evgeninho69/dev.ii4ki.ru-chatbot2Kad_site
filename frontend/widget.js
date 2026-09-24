@@ -383,9 +383,26 @@
     wrap.innerHTML = "<div class='bubble'>" + THINKING_SVG + "</div>";
     body.appendChild(wrap);
     body.scrollTop = body.scrollHeight;
+    var removed = false;
     return {
-      remove: function () { if (wrap.parentNode) wrap.parentNode.removeChild(wrap); }
+      remove: function () {
+        if (removed) return;
+        removed = true;
+        if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
+      }
     };
+  }
+
+  // Гарантирует, что SVG-анимация «размышления» видна минимум 600 мс.
+  // Если LLM ответил мгновенно — ждём оставшееся время, иначе убираем сразу.
+  function finishTyping() {
+    var elapsed = performance.now() - typingShownAt;
+    var wait = Math.max(0, 600 - elapsed);
+    if (wait === 0) {
+      typing.remove();
+    } else {
+      setTimeout(function () { typing.remove(); }, wait);
+    }
   }
 
   function open() {
@@ -416,6 +433,9 @@
     addMsg("user", text);
     var typing = showTyping();
     currentAssistant = null;
+    // Фиксируем момент показа, чтобы анимация «размышления» висела
+    // минимум 800 мс — даже если LLM ответит мгновенно.
+    var typingShownAt = performance.now();
 
     try {
       var resp = await fetch(CFG.apiBase + "/chat", {
@@ -451,7 +471,7 @@
           try { ev = JSON.parse(line); } catch (e) { continue; }
           if (ev.type === "meta") {
             if (!currentAssistant && ev.page_url && ev.page_title) {
-              typing.remove();
+              finishTyping();
               currentAssistant = addMsg("assistant", "");
               // сохраняем метаданные для карточки
               currentAssistant.__meta = {
@@ -463,7 +483,7 @@
           } else if (ev.type === "content") {
             fullText += ev.delta;
             if (!currentAssistant) {
-              typing.remove();
+              finishTyping();
               currentAssistant = addMsg("assistant", "");
             }
             var bubble = currentAssistant.querySelector(".bubble");
@@ -483,13 +503,13 @@
             }
             body.scrollTop = body.scrollHeight;
           } else if (ev.type === "error") {
-            typing.remove();
+            finishTyping();
             addMsg("assistant", "⚠️ Ошибка: " + ev.message);
           }
         }
       }
     } catch (e) {
-      typing.remove();
+      finishTyping();
       addMsg("assistant", "⚠️ Не удалось связаться с сервером.");
     } finally {
       sendBtn.disabled = false;
