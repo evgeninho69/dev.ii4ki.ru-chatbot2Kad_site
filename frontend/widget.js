@@ -427,9 +427,13 @@
   var typingShownAt = 0;         // момент показа «размышления» (ms)
   var typing = null;             // { remove() } — ссылка на thinking-bubble (модульный)
 
+  var sending = false;  // single-flight guard (модульный)
+
   async function send() {
+    if (sending) return;  // защита от двойных кликов / повторов Enter
     var text = (input.value || "").trim();
     if (!text) return;
+    sending = true;
     input.value = "";
     sendBtn.disabled = true;
     quick.innerHTML = "";
@@ -515,6 +519,7 @@
       addMsg("assistant", "⚠️ Не удалось связаться с сервером.");
     } finally {
       sendBtn.disabled = false;
+      sending = false;
     }
   }
 
