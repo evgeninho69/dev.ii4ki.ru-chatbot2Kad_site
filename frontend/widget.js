@@ -421,8 +421,9 @@
   });
   panel.querySelector(".kad-chatbot-close").addEventListener("click", close);
 
-  // Состояние текущего ответа ассистента
+  // Состояние текущего ответа ассистента (модульный scope — доступно из finishTyping)
   var currentAssistant = null;  // { wrap, bubble, meta }
+  var typingShownAt = 0;         // момент показа «размышления» (ms)
 
   async function send() {
     var text = (input.value || "").trim();
@@ -433,9 +434,8 @@
     addMsg("user", text);
     var typing = showTyping();
     currentAssistant = null;
-    // Фиксируем момент показа, чтобы анимация «размышления» висела
-    // минимум 800 мс — даже если LLM ответит мгновенно.
-    var typingShownAt = performance.now();
+    // Фиксируем момент показа — finishTyping() прочитает эту переменную
+    typingShownAt = performance.now();
 
     try {
       var resp = await fetch(CFG.apiBase + "/chat", {
