@@ -1,0 +1,10 @@
+# 2KAD Chatbot Backend — dependencies
+# Python 3.10+
+
+fastapi==0.115.0
+uvicorn[standard]==0.32.0
+httpx==0.27.2
+pydantic==2.9.2
+
+# Optional — для локального теста CLI (не нужен в проде)
+rich==13.9.4
