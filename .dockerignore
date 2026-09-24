@@ -1,0 +1,47 @@
+# Files NOT to copy into Docker image
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Editor / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# Data — индекс пересобирается на лету через site_index.json
+backend/data/*.tmp
+
+# Tests
+tests/
+.pytest_cache/
+coverage/
+
+# Documentation (всё равно есть в README)
+docs/
+
+# Frontend билды
+node_modules/
+dist/
