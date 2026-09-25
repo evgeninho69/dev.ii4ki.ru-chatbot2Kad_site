@@ -69,7 +69,10 @@ class AnyModelClient:
             "stream": True,
         }
         used_fallback = False
-        overall_timeout_s = 60
+        # Mistral может отвечать за 1-3 сек в норме, но иногда за 30-90 сек
+        # при перегрузке тира. Даём чуть больше на первичную модель,
+        # потом fallback. read — 90 сек ждём, connect — 10 сек.
+        overall_timeout_s = 90
 
         # CoT-фильтр (защита от провайдерских префиксов в content)
         import re as _re
@@ -86,7 +89,9 @@ class AnyModelClient:
         _state = {"in_cot": None, "buf": ""}
 
         try:
-            async with httpx.AsyncClient(timeout=overall_timeout_s) as client:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(overall_timeout_s, connect=10.0),
+            ) as client:
                 resp = await client.post(
                     url, headers=self._headers(), json=payload,
                 )
