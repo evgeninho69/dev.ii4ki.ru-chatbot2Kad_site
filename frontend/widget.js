@@ -664,8 +664,28 @@
           } else if (ev.type === "error") {
             stopPhraseCycle();
             typing.remove();
-            var errMsg = (ev.message || "").trim() || "неизвестная ошибка";
-            addMsg("assistant", "⚠️ Ошибка: " + errMsg + ". Попробуйте позже или позвоните +7 (4822) 41-57-68.");
+            // Скрываем технические детали (stall/fallback/ReadTimeout) от пользователя.
+            // Backend уже отдаёт friendly текст в error event; если по какой-то причине
+            // пришёл технический текст — мапим на безопасное сообщение.
+            var raw = (ev.message || "").trim();
+            var friendly;
+            if (
+              raw && (
+                raw.indexOf("stall") < 0 &&
+                raw.indexOf("fallback") < 0 &&
+                raw.indexOf("ReadTimeout") < 0 &&
+                raw.indexOf("chunk") < 0 &&
+                raw.indexOf("upstream") < 0 &&
+                raw.indexOf("mistral") < 0 &&
+                raw.indexOf("Mistral") < 0
+              )
+            ) {
+              // Backend прислал уже friendly текст — показываем как есть.
+              friendly = raw;
+            } else {
+              friendly = "Не удалось подготовить ответ. Попробуйте позже или позвоните +7 (4822) 41-57-68.";
+            }
+            addMsg("assistant", "⚠️ " + friendly);
           }
         }
       }
