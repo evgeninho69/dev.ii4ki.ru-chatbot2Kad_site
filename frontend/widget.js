@@ -11,6 +11,7 @@
  *   - sessionId: уникальный ID сессии (если null — генерируется)
  *
  * Стили изолированы через .kad-chatbot-*
+ * Совместимость: проверено в Яндекс.Браузере, Chrome 100+, Firefox 90+.
  */
 (function () {
   "use strict";
@@ -34,6 +35,61 @@
       "Чем могу помочь?",
   }, window.KAD_CHATBOT_CONFIG || {});
 
+  // ---- 50 фраз «размышления» (циклически, каждые 2.8 сек) ----
+  var THINKING_PHRASES = [
+    "Анализирую запрос…",
+    "Это задачка не из простых, надо хорошенько подумать…",
+    "Покопаюсь в своих знаниях по 2kad.ru…",
+    "Ну и вопросики надо вспомнить…",
+    "Сейчас разберусь, что к чему…",
+    "Сопоставляю с базой знаний 2КАД…",
+    "Ищу подходящий раздел сайта…",
+    "Раскладываю запрос по полочкам…",
+    "Вспоминаю подходящий норматив…",
+    "Перебираю варианты ответа…",
+    "Сейчас подберу точную ссылку…",
+    "Проверяю, что говорит наш сайт…",
+    "Это похоже на вопрос по межеванию…",
+    "Ага, кадастровая тематика, так-так…",
+    "Читаю между строк вашего вопроса…",
+    "Подключаю свою экспертизу по Твери…",
+    "Достаю нужную страницу 2kad.ru…",
+    "Прикидываю, как лучше сформулировать…",
+    "Это из области кадастра, разбираюсь…",
+    "Сейчас подумаю над формулировкой…",
+    "Свежу знания по нормам 2026 года…",
+    "Выясняю, что именно вы спрашиваете…",
+    "Так, это проектные работы или межевание?",
+    "Сравниваю с тем, что у нас на сайте…",
+    "Ищу подходящую формулировку…",
+    "Сейчас структурирую ответ…",
+    "Разбираюсь в деталях вашего вопроса…",
+    "Это про недвижимость в Твери, минутку…",
+    "Думаю, как лучше подать ответ…",
+    "Анализирую контекст обращения…",
+    "Продумываю, что именно вам подсказать…",
+    "Подбираю релевантный материал…",
+    "Сверяюсь с базой услуг 2КАД…",
+    "Сейчас будет короткий и точный ответ…",
+    "Это про техплан или что-то другое?…",
+    "Разбираю по полочкам ваш запрос…",
+    "Смотрю, что мы пишем про это на сайте…",
+    "Уточняю формулировки по 44-ФЗ…",
+    "Подключаю знания по кадастровой сфере…",
+    "Так, вспоминаю подходящий раздел…",
+    "Это похоже на ГПЗУ, проверяю…",
+    "Изучаю ваш запрос подробнее…",
+    "Сейчас найду нужную страницу…",
+    "Продумываю, как ответить по делу…",
+    "Раскладываю задачу на части…",
+    "Соберу ответ из того, что знаю…",
+    "Подбираю точные термины…",
+    "Так-так, посмотрю в базе 2kad.ru…",
+    "Подключаю профильные знания 2КАД…",
+    "Это связано с землёй и границами…",
+    "Скоро будет внятный и полезный ответ…"
+  ];
+
   // ---- SVG-иконки ----
   var ROBOT_SVG =
     '<svg viewBox="0 0 32 32" width="28" height="28" ' +
@@ -48,34 +104,49 @@
     '<circle cx="16" cy="5" r="1" fill="currentColor"/>' +
     '</svg>';
 
-  // Анимация «размышления» — контур участка + поэтажный план
-  var THINKING_SVG =
-    '<div class="kad-thinking" aria-label="Ассистент думает">' +
-    '<svg viewBox="0 0 120 48" width="120" height="48" ' +
-    'preserveAspectRatio="xMidYMid meet">' +
-    '<g class="plot">' +
-    '<polygon class="plot-poly" points="10,8 50,5 56,38 14,42" />' +
-    '<polygon class="plot-fill" points="10,8 50,5 56,38 14,42" />' +
-    '</g>' +
-    '<g class="compass">' +
-    '<line x1="32" y1="6" x2="32" y2="14" />' +
-    '<polygon points="29,8 32,4 35,8" />' +
-    '<text x="32" y="3" font-size="6" text-anchor="middle">N</text>' +
-    '</g>' +
-    '<g class="floor" transform="translate(64,4)">' +
-    '<rect class="floor-outer" x="0" y="0" width="48" height="40" rx="2" />' +
-    '<line class="floor-wall" x1="22" y1="0" x2="22" y2="40" />' +
-    '<rect class="floor-door" x="18" y="14" width="8" height="6" fill="#fff"/>' +
-    '<path class="floor-door-swing" d="M 22 14 A 8 8 0 0 1 22 26" ' +
-    'fill="none" stroke-dasharray="2 2"/>' +
-    '<line x1="6" y1="0" x2="14" y2="0" />' +
-    '<line x1="30" y1="40" x2="40" y2="40" />' +
-    '<text x="24" y="22" font-size="5" text-anchor="middle">12.4</text>' +
-    '<text x="35" y="22" font-size="5" text-anchor="middle">8.7</text>' +
-    '</g>' +
-    '</svg>' +
-    '<span class="kad-thinking-text">Анализирую запрос…</span>' +
-    '</div>';
+  var EXPAND_SVG =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>';
+
+  var COLLAPSE_SVG =
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" ' +
+    'stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+    '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/></svg>';
+
+  // ---- Thinking SVG (контур участка + поэтажный план + дверь + North) ----
+  function thinkingSvg() {
+    var phrase = THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+    return '<div class="kad-thinking" aria-label="Ассистент думает">' +
+      '<svg class="kad-thinking-svg" viewBox="0 0 240 100" width="100%" height="64">' +
+      // Участок
+      '<g class="plot">' +
+        '<polygon class="plot-poly" points="20,16 100,10 112,76 28,84" />' +
+        '<polygon class="plot-fill" points="20,16 100,10 112,76 28,84" />' +
+        '<g class="compass">' +
+          '<line x1="64" y1="12" x2="64" y2="28" />' +
+          '<polygon points="58,16 64,8 70,16" />' +
+          '<text x="64" y="6" font-size="10" text-anchor="middle" fill="#cc2c2c">N</text>' +
+        '</g>' +
+      '</g>' +
+      // План этажа
+      '<g class="floor" transform="translate(128,8)">' +
+        '<rect class="floor-outer" x="0" y="0" width="96" height="80" rx="2" />' +
+        '<line class="floor-wall" x1="44" y1="0" x2="44" y2="80" />' +
+        '<rect class="floor-door" x="36" y="28" width="16" height="12" fill="#fff"/>' +
+        '<path class="floor-door-swing" d="M 44 28 A 16 16 0 0 1 44 52" ' +
+          'fill="none" stroke-dasharray="3 3"/>' +
+        // Окна
+        '<line x1="12" y1="0" x2="28" y2="0" stroke="#18181b" stroke-width="3" />' +
+        '<line x1="60" y1="80" x2="80" y2="80" stroke="#18181b" stroke-width="3" />' +
+        // Площади комнат
+        '<text x="22" y="42" font-size="9" text-anchor="middle" fill="#6b7280">12.4</text>' +
+        '<text x="70" y="42" font-size="9" text-anchor="middle" fill="#6b7280">8.7</text>' +
+      '</g>' +
+      '</svg>' +
+      '<span class="kad-thinking-text" data-thinking>' + phrase + '</span>' +
+      '</div>';
+  }
 
   // ---- Иконка по типу найденной страницы (для mind-map карточки) ----
   function iconFor(mode, title) {
@@ -114,7 +185,6 @@
              'fill="none" stroke="currentColor" stroke-width="2" ' +
              'stroke-linecap="round" stroke-linejoin="round">' +
              '<path d="M3 21h18M5 21V8l7-5 7 5v13"/><path d="M9 21V12h6v9"/></svg>';
-    // default
     return '<svg viewBox="0 0 24 24" width="18" height="18" ' +
            'fill="none" stroke="currentColor" stroke-width="2" ' +
            'stroke-linecap="round" stroke-linejoin="round">' +
@@ -132,7 +202,7 @@
     return v;
   })();
 
-  // ---- inject styles ----
+  // ---- styles ----
   var css = [
     // ---- Кнопка (левый нижний угол) ----
     ".kad-chatbot-btn{position:fixed;bottom:24px;left:24px;z-index:999999;",
@@ -157,9 +227,16 @@
     ".kad-chatbot-panel{position:fixed;bottom:116px;left:24px;z-index:999999;",
     "width:400px;max-width:calc(100vw - 32px);height:580px;max-height:82vh;",
     "background:#fff;border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.22);",
-    "display:none;flex-direction:column;overflow:hidden;font-family:Manrope,system-ui,sans-serif}",
+    "display:none;flex-direction:column;overflow:hidden;font-family:Manrope,system-ui,sans-serif;",
+    "transition:width .25s ease, height .25s ease, left .25s ease, bottom .25s ease, border-radius .25s ease}",
     ".kad-chatbot-panel.open{display:flex;animation:kadSlide .25s ease}",
     "@keyframes kadSlide{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}",
+
+    // ---- Полноэкранный режим ----
+    ".kad-chatbot-panel.expanded{width:calc(50vw - 24px);height:calc(100vh - 48px);bottom:24px;left:24px;border-radius:16px}",
+    ".kad-chatbot-panel.expanded .kad-chatbot-body{font-size:14px}",
+    ".kad-chatbot-panel.expanded .kad-source-card .title{font-size:14px}",
+    ".kad-chatbot-panel.expanded .kad-chatbot-msg .bubble{font-size:14px;padding:12px 16px;max-width:90%}",
 
     // ---- Шапка ----
     ".kad-chatbot-header{background:linear-gradient(135deg," + CFG.primaryColor + " 0%, #a51d1d 100%);color:#fff;",
@@ -167,8 +244,12 @@
     ".kad-chatbot-header h3{margin:0;font-size:15px;font-weight:700;display:flex;align-items:center;gap:8px}",
     ".kad-chatbot-header h3 svg{flex-shrink:0}",
     ".kad-chatbot-header p{margin:3px 0 0;font-size:11px;opacity:.85}",
-    ".kad-chatbot-close{background:transparent;border:none;color:#fff;",
-    "font-size:22px;cursor:pointer;line-height:1}",
+    ".kad-chatbot-header-actions{display:flex;gap:8px;align-items:center}",
+    ".kad-chatbot-icon-btn{background:transparent;border:none;color:#fff;",
+    "font-size:18px;cursor:pointer;line-height:1;padding:4px 6px;border-radius:6px;",
+    "transition:background .15s ease}",
+    ".kad-chatbot-icon-btn:hover{background:rgba(255,255,255,.18)}",
+    ".kad-chatbot-close{font-size:22px}",
     ".kad-chatbot-badge-dev{font-size:9px;font-weight:600;background:rgba(255,255,255,.22);",
     "padding:2px 6px;border-radius:4px;margin-left:4px;letter-spacing:.3px}",
     ".kad-chatbot-session{font-size:10px;opacity:.7;margin-top:2px;display:flex;",
@@ -193,6 +274,27 @@
     ".kad-chatbot-msg .bubble em{font-style:italic;color:#6b7280;font-size:11px;",
     "display:block;margin-top:4px}",
 
+    // ---- Thinking-анимация ----
+    ".kad-thinking{padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:200px}",
+    ".kad-thinking-svg{overflow:visible;display:block}",
+    ".kad-thinking-text{font-size:12px;color:#6b7280;font-style:italic;letter-spacing:.2px;text-align:center;min-height:18px}",
+    ".plot-poly{fill:none;stroke:" + CFG.primaryColor + ";stroke-width:2;",
+    "stroke-dasharray:300;stroke-dashoffset:300;animation:kadPlot 2.4s ease-out infinite}",
+    ".plot-fill{fill:" + CFG.primaryColor + ";fill-opacity:.06;animation:kadPlotFill 2.4s ease-out infinite}",
+    "@keyframes kadPlot{0%{stroke-dashoffset:300}45%,100%{stroke-dashoffset:0}}",
+    "@keyframes kadPlotFill{0%,45%{fill-opacity:0}65%,100%{fill-opacity:.08}}",
+    ".compass{transform-origin:64px 16px;animation:kadCompass 3.5s ease-in-out infinite}",
+    "@keyframes kadCompass{0%,100%{transform:rotate(-6deg)}50%{transform:rotate(6deg)}}",
+    ".floor-outer{fill:none;stroke:#18181b;stroke-width:2;",
+    "stroke-dasharray:300;stroke-dashoffset:300;animation:kadWall 2.4s ease-out infinite .6s}",
+    ".floor-wall{stroke:#18181b;stroke-width:2;",
+    "stroke-dasharray:80;stroke-dashoffset:80;animation:kadWall 2.4s ease-out infinite 1.2s}",
+    ".floor-door-swing{stroke:#a51d1d;stroke-width:1.5;",
+    "stroke-dasharray:50;stroke-dashoffset:50;animation:kadWall 2.4s ease-out infinite 1.8s}",
+    "@keyframes kadWall{0%{stroke-dashoffset:300}35%,100%{stroke-dashoffset:0}}",
+    ".plot-poly{filter:drop-shadow(0 0 4px " + CFG.primaryColor + "44)}",
+    ".floor-outer{filter:drop-shadow(0 0 2px rgba(0,0,0,.2))}",
+
     // ---- Mind-map карточка источника ----
     ".kad-source-card{margin-top:8px;display:flex;align-items:stretch;",
     "background:linear-gradient(135deg,#fef7f7 0%, #fff 100%);",
@@ -213,27 +315,7 @@
     ".kad-source-card .arrow{flex-shrink:0;align-self:center;padding:0 10px 0 0;color:#cbd5e1}",
     ".kad-source-card .arrow svg{width:14px;height:14px}",
 
-    // ---- Thinking-анимация ----
-    ".kad-thinking{padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:6px;min-width:140px}",
-    ".kad-thinking svg{overflow:visible}",
-    ".kad-thinking-text{font-size:11px;color:#6b7280;letter-spacing:.2px}",
-    ".plot-poly{fill:none;stroke:" + CFG.primaryColor + ";stroke-width:1.5;",
-    "stroke-dasharray:200;stroke-dashoffset:200;animation:kadPlot 2.4s ease-out infinite}",
-    ".plot-fill{fill:" + CFG.primaryColor + ";fill-opacity:.06;animation:kadPlotFill 2.4s ease-out infinite}",
-    "@keyframes kadPlot{0%{stroke-dashoffset:200}40%,100%{stroke-dashoffset:0}}",
-    "@keyframes kadPlotFill{0%,40%{fill-opacity:0}60%,100%{fill-opacity:.06}}",
-    ".compass{transform-origin:32px 10px;animation:kadCompass 3s ease-in-out infinite}",
-    "@keyframes kadCompass{0%,100%{transform:rotate(-5deg)}50%{transform:rotate(5deg)}}",
-    ".floor-outer{fill:none;stroke:#18181b;stroke-width:1.5;",
-    "stroke-dasharray:200;stroke-dashoffset:200;animation:kadWall 2.4s ease-out infinite .6s}",
-    ".floor-wall{stroke:#18181b;stroke-width:1.5;",
-    "stroke-dasharray:40;stroke-dashoffset:40;animation:kadWall 2.4s ease-out infinite 1.2s}",
-    ".floor-door-swing{stroke:#a51d1d;stroke-width:1;",
-    "stroke-dasharray:25;stroke-dashoffset:25;animation:kadWall 2.4s ease-out infinite 1.8s}",
-    "@keyframes kadWall{0%{stroke-dashoffset:200}30%,100%{stroke-dashoffset:0}}",
-    ".plot-poly{filter:drop-shadow(0 0 2px " + CFG.primaryColor + "33)}",
-
-    // ---- Быстрые кнопки ----
+    // ---- Quick-кнопки ----
     ".kad-chatbot-quick{padding:6px 14px 10px}",
     ".kad-chatbot-quick button{display:block;width:100%;text-align:left;",
     "background:#fff;border:1px solid #e5e7eb;border-radius:10px;",
@@ -253,8 +335,10 @@
     "display:flex;align-items:center;justify-content:center;font-size:16px}",
     ".kad-chatbot-footer button:disabled{opacity:.4;cursor:not-allowed}",
 
+    // ---- Mobile ----
     "@media(max-width:480px){.kad-chatbot-panel{left:8px;right:8px;width:auto;",
-    "max-width:none}.kad-chatbot-btn{left:14px;bottom:14px}}",
+    "max-width:none;bottom:100px}.kad-chatbot-btn{left:14px;bottom:14px}",
+    ".kad-chatbot-panel.expanded{left:0;right:0;width:auto;height:100vh;bottom:0;border-radius:0}}",
   ].join("");
   var style = document.createElement("style");
   style.textContent = css;
@@ -285,7 +369,12 @@
           "<span>контекст сессии активен</span>" +
         "</div>" +
       "</div>" +
-      "<button class='kad-chatbot-close' aria-label='Закрыть'>×</button>" +
+      "<div class='kad-chatbot-header-actions'>" +
+        "<button class='kad-chatbot-icon-btn kad-chatbot-expand' " +
+        "title='Развернуть на пол-экрана' aria-label='Развернуть'>" + EXPAND_SVG + "</button>" +
+        "<button class='kad-chatbot-icon-btn kad-chatbot-close' " +
+        "title='Закрыть' aria-label='Закрыть'>×</button>" +
+      "</div>" +
     "</div>" +
     "<div class='kad-chatbot-body'></div>" +
     "<div class='kad-chatbot-quick'></div>" +
@@ -304,6 +393,7 @@
   var sendBtn = panel.querySelector(".kad-chatbot-footer button");
   var quick = panel.querySelector(".kad-chatbot-quick");
   var badge = btn.querySelector(".badge");
+  var expandBtn = panel.querySelector(".kad-chatbot-expand");
 
   // ---- quick replies ----
   var QUICK = [
@@ -326,7 +416,7 @@
 
   // ---- helpers ----
   function escape(s) {
-    return s.replace(/[&<>"']/g, function (c) {
+    return String(s).replace(/[&<>"']/g, function (c) {
       return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c];
     });
   }
@@ -350,13 +440,16 @@
     return wrap;
   }
 
-  // Mind-map источник: тип-специфичная иконка, заголовок, URL
   function renderSourceCard(meta) {
     var label = meta.mode === "pricing" ? "Калькулятор стоимости" : "Источник";
     var ic = iconFor(meta.mode, meta.page_title);
     var host = "";
-    try { host = new URL(meta.page_url).hostname.replace(/^www\./, ""); }
-    catch (e) {}
+    var path = "";
+    try {
+      var u = new URL(meta.page_url);
+      host = u.hostname.replace(/^www\./, "");
+      path = u.pathname;
+    } catch (e) {}
     var card = document.createElement("a");
     card.className = "kad-source-card";
     card.href = meta.page_url;
@@ -367,7 +460,7 @@
       "<div class='body'>" +
         "<div class='label'>" + escape(label) + "</div>" +
         "<span class='title'>" + escape(meta.page_title) + "</span>" +
-        "<span class='url'>" + escape(host + new URL(meta.page_url).pathname) + "</span>" +
+        "<span class='url'>" + escape(host + path) + "</span>" +
       "</div>" +
       "<div class='arrow'>" +
         "<svg viewBox='0 0 24 24' fill='none' stroke='currentColor' " +
@@ -377,26 +470,48 @@
     return card;
   }
 
+  // Thinking-таймер: каждые 2.8 сек меняем фразу
+  var phraseInterval = null;
+  function startPhraseCycle(textEl) {
+    stopPhraseCycle();
+    phraseInterval = setInterval(function () {
+      if (!textEl || !textEl.parentNode) { stopPhraseCycle(); return; }
+      var next = THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+      textEl.textContent = next;
+      textEl.style.opacity = "0";
+      // fade-in
+      setTimeout(function () {
+        if (textEl.parentNode) textEl.style.opacity = "1";
+      }, 50);
+    }, 2800);
+  }
+  function stopPhraseCycle() {
+    if (phraseInterval) { clearInterval(phraseInterval); phraseInterval = null; }
+  }
+
   function showTyping() {
     var wrap = document.createElement("div");
     wrap.className = "kad-chatbot-msg assistant kad-typing";
-    wrap.innerHTML = "<div class='bubble'>" + THINKING_SVG + "</div>";
+    wrap.innerHTML = "<div class='bubble'>" + thinkingSvg() + "</div>";
     body.appendChild(wrap);
     body.scrollTop = body.scrollHeight;
+    // Запустить цикл фраз
+    var textEl = wrap.querySelector("[data-thinking]");
+    startPhraseCycle(textEl);
     var removed = false;
     return {
       remove: function () {
         if (removed) return;
         removed = true;
+        stopPhraseCycle();
         if (wrap.parentNode) wrap.parentNode.removeChild(wrap);
       }
     };
   }
 
-  // Гарантирует, что SVG-анимация «размышления» видна минимум 600 мс.
-  // Если LLM ответил мгновенно — ждём оставшееся время, иначе убираем сразу.
   function finishTyping() {
     if (!typing) return;
+    stopPhraseCycle();
     var elapsed = performance.now() - typingShownAt;
     var wait = Math.max(0, 600 - elapsed);
     if (wait === 0) {
@@ -415,22 +530,41 @@
     }
     setTimeout(function () { input.focus(); }, 100);
   }
-  function close() { panel.classList.remove("open"); }
+  function close() {
+    panel.classList.remove("open");
+    panel.classList.remove("expanded");
+    if (expandBtn) expandBtn.innerHTML = EXPAND_SVG;
+  }
+
+  function toggleExpand() {
+    var isExpanded = panel.classList.contains("expanded");
+    if (isExpanded) {
+      panel.classList.remove("expanded");
+      expandBtn.innerHTML = EXPAND_SVG;
+      expandBtn.title = "Развернуть на пол-экрана";
+      expandBtn.setAttribute("aria-label", "Развернуть");
+    } else {
+      panel.classList.add("expanded");
+      expandBtn.innerHTML = COLLAPSE_SVG;
+      expandBtn.title = "Свернуть обратно";
+      expandBtn.setAttribute("aria-label", "Свернуть");
+    }
+  }
 
   btn.addEventListener("click", function () {
     if (panel.classList.contains("open")) close(); else open();
   });
   panel.querySelector(".kad-chatbot-close").addEventListener("click", close);
+  expandBtn.addEventListener("click", toggleExpand);
 
   // Состояние текущего ответа ассистента (модульный scope — доступно из finishTyping)
-  var currentAssistant = null;  // { wrap, bubble, meta }
-  var typingShownAt = 0;         // момент показа «размышления» (ms)
-  var typing = null;             // { remove() } — ссылка на thinking-bubble (модульный)
-
-  var sending = false;  // single-flight guard (модульный)
+  var currentAssistant = null;
+  var typingShownAt = 0;
+  var typing = null;
+  var sending = false;
 
   async function send() {
-    if (sending) return;  // защита от двойных кликов / повторов Enter
+    if (sending) return;
     var text = (input.value || "").trim();
     if (!text) return;
     sending = true;
@@ -440,7 +574,6 @@
     addMsg("user", text);
     typing = showTyping();
     currentAssistant = null;
-    // Фиксируем момент показа — finishTyping() прочитает эту переменную
     typingShownAt = performance.now();
 
     try {
@@ -453,9 +586,15 @@
         }),
       });
       if (!resp.ok || !resp.body) {
+        stopPhraseCycle();
         typing.remove();
+        var statusMsg = "HTTP " + resp.status;
+        try {
+          var errText = await resp.text();
+          if (errText) statusMsg += ": " + errText.slice(0, 200);
+        } catch (ee) {}
         addMsg("assistant",
-          "⚠️ Не удалось получить ответ от сервера. Попробуйте позже или позвоните " +
+          "⚠️ Не удалось получить ответ (" + statusMsg + "). Попробуйте позже или позвоните " +
           "+7 (4822) 41-57-68.");
         sendBtn.disabled = false;
         return;
@@ -479,7 +618,6 @@
             if (!currentAssistant && ev.page_url && ev.page_title) {
               finishTyping();
               currentAssistant = addMsg("assistant", "");
-              // сохраняем метаданные для карточки
               currentAssistant.__meta = {
                 mode: ev.mode,
                 page_url: ev.page_url,
@@ -493,7 +631,6 @@
               currentAssistant = addMsg("assistant", "");
             }
             var bubble = currentAssistant.querySelector(".bubble");
-            // Если есть сохранённая мета — рисуем текст + mind-map карточку
             if (currentAssistant.__meta) {
               if (!bubble.querySelector(".answer")) {
                 bubble.innerHTML =
@@ -509,14 +646,19 @@
             }
             body.scrollTop = body.scrollHeight;
           } else if (ev.type === "error") {
-            finishTyping();
-            addMsg("assistant", "⚠️ Ошибка: " + ev.message);
+            stopPhraseCycle();
+            typing.remove();
+            var errMsg = (ev.message || "").trim() || "неизвестная ошибка";
+            addMsg("assistant", "⚠️ Ошибка: " + errMsg + ". Попробуйте позже или позвоните +7 (4822) 41-57-68.");
           }
         }
       }
     } catch (e) {
-      finishTyping();
-      addMsg("assistant", "⚠️ Не удалось связаться с сервером.");
+      stopPhraseCycle();
+      typing.remove();
+      var errText = (e && e.message) ? e.message : "неизвестная ошибка";
+      addMsg("assistant", "⚠️ Не удалось связаться с сервером: " + errText +
+        ". Попробуйте позже или позвоните +7 (4822) 41-57-68.");
     } finally {
       sendBtn.disabled = false;
       sending = false;
@@ -531,11 +673,22 @@
     }
   });
 
-  // ---- API ----
+  // Закрываем thinking, если виджет закрылся во время ответа
+  var originalClose = close;
+  close = function () {
+    if (typing) {
+      stopPhraseCycle();
+      typing.remove();
+      typing = null;
+    }
+    originalClose();
+  };
+
   window.KadChatbot = {
     open: open,
     close: close,
     send: send,
+    expand: toggleExpand,
     sessionId: function () { return SESSION_ID; },
   };
 })();
