@@ -213,6 +213,14 @@ async def chat(req: ChatRequest):
                             f"LLM error for {sid[:8]} "
                             f"(mode={decision.mode}): {ev['message'][:200]}"
                         )
+                        # Если уже был частичный ответ — сбрасываем его:
+                        # пользователь не должен видеть обрывки + fallback вместе.
+                        had_partial = bool(full.strip())
+                        if had_partial:
+                            yield json.dumps({
+                                "type": "replace",
+                                "text": "",
+                            }, ensure_ascii=False).encode() + b"\n"
                         if decision.page:
                             page_url = decision.page["url"]
                             page_title = decision.page.get("title", "страница")
@@ -243,6 +251,7 @@ async def chat(req: ChatRequest):
                                 "usage": usage,
                                 "page": decision.found_url,
                                 "fallback": True,
+                                "partial_before": had_partial,
                             })
                             return
                         # Страница не найдена — отдаём friendly error
