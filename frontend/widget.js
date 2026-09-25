@@ -117,34 +117,37 @@
   // ---- Thinking SVG (контур участка + поэтажный план + дверь + North) ----
   function thinkingSvg() {
     var phrase = THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
+    // SVG фиксированного размера — не схлопывается в 0 на узких бабблах.
+    // Фразу помещаем ВНЕ svg (чтобы браузер не рендерил странные шрифты внутри).
     return '<div class="kad-thinking" aria-label="Ассистент думает">' +
-      '<svg class="kad-thinking-svg" viewBox="0 0 240 100" width="100%" height="64">' +
-      // Участок
-      '<g class="plot">' +
-        '<polygon class="plot-poly" points="20,16 100,10 112,76 28,84" />' +
-        '<polygon class="plot-fill" points="20,16 100,10 112,76 28,84" />' +
-        '<g class="compass">' +
-          '<line x1="64" y1="12" x2="64" y2="28" />' +
-          '<polygon points="58,16 64,8 70,16" />' +
-          '<text x="64" y="6" font-size="10" text-anchor="middle" fill="#cc2c2c">N</text>' +
+      '<svg class="kad-thinking-svg" viewBox="0 0 240 80" width="240" height="64">' +
+        // Участок
+        '<g class="plot">' +
+          '<polygon class="plot-poly" points="20,16 100,10 112,60 28,68" />' +
+          '<polygon class="plot-fill" points="20,16 100,10 112,60 28,68" />' +
+          '<g class="compass">' +
+            '<line x1="64" y1="12" x2="64" y2="26" />' +
+            '<polygon points="58,14 64,6 70,14" />' +
+            '<text x="64" y="4" font-size="10" text-anchor="middle" fill="#cc2c2c" font-weight="700">N</text>' +
+          '</g>' +
         '</g>' +
-      '</g>' +
-      // План этажа
-      '<g class="floor" transform="translate(128,8)">' +
-        '<rect class="floor-outer" x="0" y="0" width="96" height="80" rx="2" />' +
-        '<line class="floor-wall" x1="44" y1="0" x2="44" y2="80" />' +
-        '<rect class="floor-door" x="36" y="28" width="16" height="12" fill="#fff"/>' +
-        '<path class="floor-door-swing" d="M 44 28 A 16 16 0 0 1 44 52" ' +
-          'fill="none" stroke-dasharray="3 3"/>' +
-        // Окна
-        '<line x1="12" y1="0" x2="28" y2="0" stroke="#18181b" stroke-width="3" />' +
-        '<line x1="60" y1="80" x2="80" y2="80" stroke="#18181b" stroke-width="3" />' +
-        // Площади комнат
-        '<text x="22" y="42" font-size="9" text-anchor="middle" fill="#6b7280">12.4</text>' +
-        '<text x="70" y="42" font-size="9" text-anchor="middle" fill="#6b7280">8.7</text>' +
-      '</g>' +
+        // План этажа
+        '<g class="floor" transform="translate(128,8)">' +
+          '<rect class="floor-outer" x="0" y="0" width="96" height="64" rx="2" />' +
+          '<line class="floor-wall" x1="44" y1="0" x2="44" y2="64" />' +
+          '<rect class="floor-door" x="36" y="22" width="16" height="14" fill="#fff"/>' +
+          '<path class="floor-door-swing" d="M 44 22 A 14 14 0 0 1 44 50" ' +
+            'fill="none" stroke-dasharray="3 3"/>' +
+          '<line x1="12" y1="0" x2="28" y2="0" stroke="#18181b" stroke-width="3" />' +
+          '<line x1="60" y1="64" x2="80" y2="64" stroke="#18181b" stroke-width="3" />' +
+          '<text x="22" y="34" font-size="10" text-anchor="middle" fill="#6b7280" font-weight="600">12.4</text>' +
+          '<text x="70" y="34" font-size="10" text-anchor="middle" fill="#6b7280" font-weight="600">8.7</text>' +
+        '</g>' +
       '</svg>' +
-      '<span class="kad-thinking-text" data-thinking>' + phrase + '</span>' +
+      // Фраза — крупно, ярко, читаемо
+      '<div class="kad-thinking-text" data-thinking>' +
+        '<span class="dot-pulse">●</span> ' + phrase +
+      '</div>' +
       '</div>';
   }
 
@@ -275,9 +278,15 @@
     "display:block;margin-top:4px}",
 
     // ---- Thinking-анимация ----
-    ".kad-thinking{padding:14px 8px;display:flex;flex-direction:column;align-items:center;gap:10px;min-width:200px}",
+    ".kad-thinking{padding:14px 12px;display:flex;flex-direction:column;align-items:center;gap:12px;min-width:240px}",
     ".kad-thinking-svg{overflow:visible;display:block}",
-    ".kad-thinking-text{font-size:12px;color:#6b7280;font-style:italic;letter-spacing:.2px;text-align:center;min-height:18px}",
+    ".kad-thinking-text{font-size:14px;font-weight:600;color:#18181b;",
+    "letter-spacing:-.1px;text-align:center;min-height:20px;line-height:1.4;",
+    "background:#fef7f7;border-left:3px solid " + CFG.primaryColor + ";",
+    "padding:8px 14px;border-radius:6px;max-width:100%}",
+    ".kad-thinking-text .dot-pulse{display:inline-block;color:" + CFG.primaryColor + ";",
+    "margin-right:6px;animation:kadDotPulse 1s ease-in-out infinite}",
+    "@keyframes kadDotPulse{0%,100%{opacity:.3;transform:scale(.85)}50%{opacity:1;transform:scale(1.1)}}",
     ".plot-poly{fill:none;stroke:" + CFG.primaryColor + ";stroke-width:2;",
     "stroke-dasharray:300;stroke-dashoffset:300;animation:kadPlot 2.4s ease-out infinite}",
     ".plot-fill{fill:" + CFG.primaryColor + ";fill-opacity:.06;animation:kadPlotFill 2.4s ease-out infinite}",
@@ -470,20 +479,17 @@
     return card;
   }
 
-  // Thinking-таймер: каждые 2.8 сек меняем фразу
+  // Thinking-таймер: каждые 3.5 сек меняем фразу
   var phraseInterval = null;
   function startPhraseCycle(textEl) {
     stopPhraseCycle();
+    if (!textEl) return;
     phraseInterval = setInterval(function () {
       if (!textEl || !textEl.parentNode) { stopPhraseCycle(); return; }
       var next = THINKING_PHRASES[Math.floor(Math.random() * THINKING_PHRASES.length)];
-      textEl.textContent = next;
-      textEl.style.opacity = "0";
-      // fade-in
-      setTimeout(function () {
-        if (textEl.parentNode) textEl.style.opacity = "1";
-      }, 50);
-    }, 2800);
+      // Чтобы CSS .dot-pulse работал, вставляем span с классом
+      textEl.innerHTML = '<span class="dot-pulse">●</span> ' + next;
+    }, 3500);
   }
   function stopPhraseCycle() {
     if (phraseInterval) { clearInterval(phraseInterval); phraseInterval = null; }
@@ -512,8 +518,11 @@
   function finishTyping() {
     if (!typing) return;
     stopPhraseCycle();
+    // Гарантируем 2000 мс показа, чтобы пользователь УВИДЕЛ анимацию +
+    // хотя бы 2-3 фразы. Раньше было 600 мс — bubble исчезала почти сразу.
     var elapsed = performance.now() - typingShownAt;
-    var wait = Math.max(0, 600 - elapsed);
+    var MIN_MS = 2000;
+    var wait = Math.max(0, MIN_MS - elapsed);
     if (wait === 0) {
       typing.remove();
     } else {
@@ -561,6 +570,7 @@
   var currentAssistant = null;
   var typingShownAt = 0;
   var typing = null;
+  var pendingMeta = null;   // метa от бэкенда — между meta и первым content
   var sending = false;
 
   async function send() {
@@ -615,10 +625,12 @@
           var ev;
           try { ev = JSON.parse(line); } catch (e) { continue; }
           if (ev.type === "meta") {
+            // Meta приходит СРАЗУ (роутинг мгновенный), но реальный ответ от Mistral
+            // может идти 1-60 сек. НЕ убираем thinking на meta — он висит до
+            // первого content (это и есть «размышление»).
             if (!currentAssistant && ev.page_url && ev.page_title) {
-              finishTyping();
-              currentAssistant = addMsg("assistant", "");
-              currentAssistant.__meta = {
+              // Запоминаем мету, но не убираем thinking-bubble
+              pendingMeta = {
                 mode: ev.mode,
                 page_url: ev.page_url,
                 page_title: ev.page_title,
@@ -629,6 +641,10 @@
             if (!currentAssistant) {
               finishTyping();
               currentAssistant = addMsg("assistant", "");
+              if (pendingMeta) {
+                currentAssistant.__meta = pendingMeta;
+                pendingMeta = null;
+              }
             }
             var bubble = currentAssistant.querySelector(".bubble");
             if (currentAssistant.__meta) {
