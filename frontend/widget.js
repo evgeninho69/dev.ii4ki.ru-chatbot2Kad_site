@@ -661,6 +661,15 @@
               bubble.innerHTML = md(fullText);
             }
             body.scrollTop = body.scrollHeight;
+          } else if (ev.type === "replace") {
+            // Backend сбросил накопленный текст (был частичный ответ от LLM,
+            // но LLM упал с ошибкой — теперь отдаём fallback-ответ).
+            // Стираем содержимое bubble, но сохраняем анимацию typing-source.
+            fullText = "";
+            if (bubble && bubble.querySelector(".answer")) {
+              bubble.querySelector(".answer").innerHTML = "";
+            }
+            body.scrollTop = body.scrollHeight;
           } else if (ev.type === "error") {
             stopPhraseCycle();
             typing.remove();
