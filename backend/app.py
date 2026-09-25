@@ -204,9 +204,56 @@ async def chat(req: ChatRequest):
                             "completion_tokens": ev.get("completion_tokens", 0),
                         }
                     elif ev["type"] == "error":
+                        # LLM упал — но если роутер нашёл релевантную страницу,
+                        # НЕ показываем пользователю техническую ошибку.
+                        # Вместо этого выдаём fallback-ответ со ссылкой на страницу
+                        # и призывом позвонить. Виджет обработает это как обычное
+                        # сообщение.
+                        log.warning(
+                            f"LLM error for {sid[:8]} "
+                            f"(mode={decision.mode}): {ev['message'][:200]}"
+                        )
+                        if decision.page:
+                            page_url = decision.page["url"]
+                            page_title = decision.page.get("title", "страница")
+                            phone = get_index().data.get("phone", "+7 (4822) 41-57-68")
+                            fallback_text = (
+                                f"К сожалению, не удалось подготовить развёрнутый ответ. "
+                                f"Посмотрите страницу [{page_title}]({page_url}) — "
+                                f"там подробная информация. "
+                                f"Если нужна консультация — позвоните {phone}."
+                            )
+                            # Отдаём как обычный content-чанк + done,
+                            # чтобы виджет отобразил это как нормальное сообщение.
+                            yield json.dumps({
+                                "type": "content",
+                                "delta": fallback_text,
+                            }, ensure_ascii=False).encode() + b"\n"
+                            history.append({"role": "user", "content": req.message})
+                            history.append({"role": "assistant", "content": fallback_text})
+                            yield json.dumps({
+                                "type": "done",
+                                "usage": usage,
+                            }, ensure_ascii=False).encode() + b"\n"
+                            push_log({
+                                "session_id": sid[:8],
+                                "mode": decision.mode,
+                                "q": req.message[:120],
+                                "reply_len": len(fallback_text),
+                                "usage": usage,
+                                "page": decision.found_url,
+                                "fallback": True,
+                            })
+                            return
+                        # Страница не найдена — отдаём friendly error
+                        # (НЕ технический текст от LLM).
                         yield json.dumps({
                             "type": "error",
-                            "message": ev["message"],
+                            "message": (
+                                "Не удалось подготовить ответ. "
+                                "Попробуйте позже или позвоните "
+                                "+7 (4822) 41-57-68."
+                            ),
                         }, ensure_ascii=False).encode() + b"\n"
                         return
                     elif ev["type"] == "done":
