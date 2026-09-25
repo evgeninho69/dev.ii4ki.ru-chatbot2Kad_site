@@ -24,7 +24,7 @@ add_action('wp_enqueue_scripts', function () {
         'kad-chatbot-widget',
         esc_url($widget_url),
         array(),
-        '1.0.0',
+        '1.0.2',
         true
     );
 
