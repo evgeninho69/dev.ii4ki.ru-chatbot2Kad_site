@@ -208,7 +208,7 @@
   // ---- styles ----
   var css = [
     // ---- Кнопка (левый нижний угол) ----
-    ".kad-chatbot-btn{position:fixed;bottom:24px;left:24px;z-index:999999;",
+    ".kad-chatbot-btn{position:fixed;top:24px;right:24px;z-index:999999;",
     "width:72px;height:72px;border-radius:50%;border:none;cursor:pointer;",
     "background:linear-gradient(135deg," + CFG.primaryColor + " 0%, #a51d1d 100%);",
     "color:#fff;",
@@ -227,7 +227,7 @@
     "@keyframes kadPulse{0%{transform:scale(.9);opacity:.6}70%{transform:scale(1.25);opacity:0}100%{opacity:0}}",
 
     // ---- Панель ----
-    ".kad-chatbot-panel{position:fixed;bottom:116px;left:24px;z-index:999999;",
+    ".kad-chatbot-panel{position:fixed;top:96px;right:24px;z-index:999999;",
     "width:400px;max-width:calc(100vw - 32px);height:580px;max-height:82vh;",
     "background:#fff;border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,.22);",
     "display:none;flex-direction:column;overflow:hidden;font-family:Manrope,system-ui,sans-serif;",
@@ -236,7 +236,7 @@
     "@keyframes kadSlide{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}",
 
     // ---- Полноэкранный режим ----
-    ".kad-chatbot-panel.expanded{width:calc(50vw - 24px);height:calc(100vh - 48px);bottom:24px;left:24px;border-radius:16px}",
+    ".kad-chatbot-panel.expanded{width:calc(50vw - 24px);height:calc(100vh - 48px);top:24px;right:24px;border-radius:16px}",
     ".kad-chatbot-panel.expanded .kad-chatbot-body{font-size:14px}",
     ".kad-chatbot-panel.expanded .kad-source-card .title{font-size:14px}",
     ".kad-chatbot-panel.expanded .kad-chatbot-msg .bubble{font-size:14px;padding:12px 16px;max-width:90%}",
@@ -345,9 +345,9 @@
     ".kad-chatbot-footer button:disabled{opacity:.4;cursor:not-allowed}",
 
     // ---- Mobile ----
-    "@media(max-width:480px){.kad-chatbot-panel{left:8px;right:8px;width:auto;",
-    "max-width:none;bottom:100px}.kad-chatbot-btn{left:14px;bottom:14px}",
-    ".kad-chatbot-panel.expanded{left:0;right:0;width:auto;height:100vh;bottom:0;border-radius:0}}",
+    "@media(max-width:480px){.kad-chatbot-panel{right:8px;left:auto;width:auto;",
+    "max-width:none;top:80px}.kad-chatbot-btn{right:14px;top:14px}",
+    ".kad-chatbot-panel.expanded{right:0;left:0;width:auto;height:100vh;top:0;border-radius:0}}",
   ].join("");
   var style = document.createElement("style");
   style.textContent = css;
