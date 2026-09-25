@@ -346,7 +346,7 @@
 
     // ---- Mobile ----
     "@media(max-width:480px){.kad-chatbot-panel{right:8px;left:auto;width:auto;",
-    "max-width:none;top:80px}.kad-chatbot-btn{right:14px;top:14px}",
+    "max-width:none;top:140px;bottom:8px}.kad-chatbot-btn{right:14px;top:72px}",
     ".kad-chatbot-panel.expanded{right:0;left:0;width:auto;height:100vh;top:0;border-radius:0}}",
   ].join("");
   var style = document.createElement("style");
