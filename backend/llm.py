@@ -205,7 +205,13 @@ class AnyModelClient:
                 ):
                     yield ev
                 return
-            yield {"type": "error", "message": f"HTTP error: {e}"}
+            # Гарантируем непустое сообщение даже при пустом str(e)
+            e_name = type(e).__name__
+            e_msg = str(e).strip() if str(e).strip() else "(без описания)"
+            yield {
+                "type": "error",
+                "message": f"HTTP error [{e_name}]: {e_msg}",
+            }
 
     async def chat_complete(
         self,
