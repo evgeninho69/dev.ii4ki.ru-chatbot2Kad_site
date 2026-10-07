@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ИИ Ассистент 2КАД — Умный помощник по недвижимости</title>
+  <meta name="description" content="Инновационные решения в недвижимости. ИИ-ассистент по кадастру, межеванию и оформлению документов в Твери и Тверской области.">
+  <link rel="preconnect" href="https://chatbot.dev.ii4ki.ru">
+  <style>
+    /* ---- 1. RESET + ROOT ---- */
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html,body{height:100%;overflow-x:hidden}
+    :root{
+      --c-bg-deep:#050216;
+      --c-bg-mid:#0a0429;
+      --c-accent-1:#cc2c2c;
+      --c-accent-2:#7a3eff;
+      --c-accent-3:#06ffa5;
+      --c-accent-4:#3a86ff;
+      --c-accent-5:#ffbe0b;
+      --c-text:#e8eaff;
+      --c-text-dim:#8a8db5;
+      --c-glass:rgba(255,255,255,0.05);
+      --c-glass-border:rgba(255,255,255,0.1);
+    }
+    body{
+      font-family:'Manrope',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      background:var(--c-bg-deep);
+      color:var(--c-text);
+      line-height:1.6;
+      min-height:100vh;
+      position:relative;
+    }
+    body::before{
+      content:"";position:fixed;inset:0;z-index:-2;
+      background:radial-gradient(ellipse at 20% 0%,rgba(122,62,255,0.25),transparent 60%),
+                  radial-gradient(ellipse at 80% 100%,rgba(204,44,44,0.18),transparent 60%),
+                  radial-gradient(ellipse at 50% 50%,rgba(6,255,165,0.06),transparent 80%);
+      pointer-events:none;
+    }
+    body::after{
+      content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;
+      background-image:
+        linear-gradient(rgba(255,255,255,0.025) 1px,transparent 1px),
+        linear-gradient(90deg,rgba(255,255,255,0.025) 1px,transparent 1px);
+      background-size:60px 60px;
+      mask-image:radial-gradient(ellipse at 50% 50%,black 40%,transparent 80%);
+      -webkit-mask-image:radial-gradient(ellipse at 50% 50%,black 40%,transparent 80%);
+      animation:gridShift 30s linear infinite;
+    }
+    @keyframes gridShift{to{background-position:60px 60px}}
+
+    /* ---- 2. FLOATING PARTICLES ---- */
+    .particle-layer{position:fixed;inset:0;pointer-events:none;z-index:0;overflow:hidden}
+    .particle{position:absolute;width:3px;height:3px;background:#fff;border-radius:50%;opacity:0;
+      box-shadow:0 0 8px currentColor;
+      animation:floatUp linear infinite}
+    @keyframes floatUp{
+      0%{transform:translateY(110vh) translateX(0);opacity:0}
+      10%{opacity:0.8}
+      90%{opacity:0.8}
+      100%{transform:translateY(-10vh) translateX(40px);opacity:0}
+    }
+
+    /* ---- 3. LAYOUT ---- */
+    .ai-page{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column}
+    .ai-header{padding:32px 24px;text-align:center;position:relative}
+    .ai-logo{display:inline-flex;align-items:center;gap:12px;margin-bottom:16px;
+      font-weight:800;letter-spacing:.1em;text-transform:uppercase;font-size:14px;color:var(--c-text-dim)}
+    .ai-logo-dot{width:10px;height:10px;border-radius:50%;background:var(--c-accent-3);
+      box-shadow:0 0 16px var(--c-accent-3);animation:pulse 1.6s ease-in-out infinite}
+    @keyframes pulse{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.4);opacity:.6}}
+
+    .ai-title{
+      font-size:clamp(40px,7vw,84px);font-weight:800;line-height:1.05;
+      letter-spacing:-.02em;margin:8px 0 18px;
+      background:linear-gradient(135deg,#fff 0%,#cc2c2c 30%,#7a3eff 60%,#06ffa5 100%);
+      background-size:300% 300%;
+      -webkit-background-clip:text;background-clip:text;color:transparent;
+      animation:auroraText 8s ease infinite;
+    }
+    @keyframes auroraText{0%,100%{background-position:0% 50%}50%{background-position:100% 50%}}
+    .ai-title .glow-char{display:inline-block;animation:charFloat 4s ease-in-out infinite}
+    .ai-title .glow-char:nth-child(2n){animation-delay:.3s}
+    .ai-title .glow-char:nth-child(3n){animation-delay:.6s}
+    @keyframes charFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
+
+    .ai-subtitle{font-size:clamp(16px,2vw,20px);color:var(--c-text-dim);max-width:680px;margin:0 auto 28px}
+    .ai-tags{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+    .ai-tag{padding:6px 14px;border-radius:999px;background:var(--c-glass);border:1px solid var(--c-glass-border);
+      font-size:13px;color:var(--c-text-dim);backdrop-filter:blur(10px)}
+
+    /* ---- 4. CHAT ---- */
+    .chat-wrap{flex:1;display:flex;align-items:center;justify-content:center;padding:24px;max-width:980px;margin:0 auto;width:100%}
+    .chat-card{
+      width:100%;min-height:560px;height:60vh;max-height:720px;display:flex;flex-direction:column;
+      background:linear-gradient(135deg,rgba(255,255,255,0.07),rgba(255,255,255,0.02));
+      border:1px solid var(--c-glass-border);border-radius:24px;backdrop-filter:blur(20px);
+      box-shadow:0 30px 80px -20px rgba(122,62,255,0.3),inset 0 1px 0 rgba(255,255,255,0.1);
+      position:relative;overflow:hidden;
+    }
+    .chat-card::before{content:"";position:absolute;top:0;left:0;right:0;height:2px;
+      background:linear-gradient(90deg,transparent,#7a3eff,#cc2c2c,#06ffa5,transparent);
+      background-size:200% 100%;animation:borderFlow 3s linear infinite}
+    @keyframes borderFlow{to{background-position:200% 0}}
+
+    .chat-head{padding:18px 22px;border-bottom:1px solid var(--c-glass-border);display:flex;align-items:center;gap:14px}
+    .chat-avatar{width:42px;height:42px;border-radius:12px;
+      background:linear-gradient(135deg,#7a3eff,#cc2c2c);
+      display:flex;align-items:center;justify-content:center;
+      box-shadow:0 0 24px rgba(122,62,255,0.5);position:relative}
+    .chat-avatar::after{content:"";position:absolute;inset:-2px;border-radius:14px;
+      background:linear-gradient(135deg,#7a3eff,#cc2c2c);z-index:-1;filter:blur(8px);opacity:0.6}
+    .chat-avatar svg{width:24px;height:24px;fill:#fff}
+    .chat-info h2{font-size:17px;font-weight:700}
+    .chat-info p{font-size:12px;color:var(--c-text-dim);margin-top:2px}
+    .chat-info .live{color:var(--c-accent-3)}
+    .chat-info .live::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
+      background:var(--c-accent-3);margin-right:6px;box-shadow:0 0 8px var(--c-accent-3);
+      animation:pulse 1.6s ease-in-out infinite}
+
+    .chat-body{flex:1;overflow-y:auto;padding:22px;display:flex;flex-direction:column;gap:14px;
+      scroll-behavior:smooth}
+    .chat-body::-webkit-scrollbar{width:6px}
+    .chat-body::-webkit-scrollbar-track{background:transparent}
+    .chat-body::-webkit-scrollbar-thumb{background:rgba(122,62,255,0.3);border-radius:3px}
+
+    .msg{display:flex;gap:10px;animation:msgIn .35s cubic-bezier(.16,1,.3,1)}
+    @keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+    .msg.user{flex-direction:row-reverse}
+    .msg-avatar{width:32px;height:32px;border-radius:10px;flex-shrink:0;
+      display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700}
+    .msg.user .msg-avatar{background:linear-gradient(135deg,#cc2c2c,#a51d1d);color:#fff}
+    .msg.ai .msg-avatar{background:linear-gradient(135deg,#7a3eff,#cc2c2c);color:#fff}
+    .msg-bubble{max-width:75%;padding:12px 16px;border-radius:14px;font-size:14.5px;line-height:1.55;
+      word-wrap:break-word}
+    .msg.user .msg-bubble{background:rgba(204,44,44,0.18);border:1px solid rgba(204,44,44,0.3);
+      border-bottom-right-radius:4px}
+    .msg.ai .msg-bubble{background:rgba(122,62,255,0.12);border:1px solid rgba(122,62,255,0.25);
+      border-bottom-left-radius:4px}
+    .msg-bubble a{color:#06ffa5;text-decoration:none;border-bottom:1px solid rgba(6,255,165,0.3)}
+    .msg-bubble a:hover{border-bottom-color:#06ffa5}
+
+    .typing{display:inline-flex;gap:4px;align-items:center;padding:8px 0}
+    .typing-dot{width:6px;height:6px;border-radius:50%;background:rgba(232,234,255,0.6);
+      animation:typingBounce 1.4s ease-in-out infinite}
+    .typing-dot:nth-child(2){animation-delay:.15s}
+    .typing-dot:nth-child(3){animation-delay:.3s}
+    @keyframes typingBounce{0%,60%,100%{transform:translateY(0);opacity:.4}30%{transform:translateY(-5px);opacity:1}}
+
+    .chat-foot{padding:14px 18px;border-top:1px solid var(--c-glass-border);display:flex;gap:10px;
+      align-items:center}
+    .chat-input{flex:1;background:rgba(255,255,255,0.04);border:1px solid var(--c-glass-border);
+      border-radius:12px;padding:12px 16px;color:var(--c-text);font-size:15px;font-family:inherit;
+      outline:none;transition:border-color .2s,box-shadow .2s}
+    .chat-input:focus{border-color:rgba(122,62,255,0.6);box-shadow:0 0 0 3px rgba(122,62,255,0.15)}
+    .chat-input::placeholder{color:var(--c-text-dim)}
+    .chat-send{width:42px;height:42px;border-radius:12px;border:none;cursor:pointer;
+      background:linear-gradient(135deg,#7a3eff,#cc2c2c);color:#fff;font-size:18px;font-weight:700;
+      display:flex;align-items:center;justify-content:center;transition:transform .15s,box-shadow .2s}
+    .chat-send:hover{transform:scale(1.06);box-shadow:0 0 20px rgba(122,62,255,0.5)}
+    .chat-send:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+
+    .quick-row{display:flex;gap:8px;flex-wrap:wrap;padding:0 18px 12px}
+    .quick-chip{padding:7px 12px;border-radius:10px;background:rgba(255,255,255,0.04);
+      border:1px solid var(--c-glass-border);color:var(--c-text-dim);font-size:13px;
+      cursor:pointer;transition:all .15s;font-family:inherit}
+    .quick-chip:hover{background:rgba(122,62,255,0.15);border-color:rgba(122,62,255,0.4);
+      color:var(--c-text)}
+
+    .source-card{margin-top:10px;padding:10px 12px;background:rgba(255,255,255,0.04);
+      border:1px solid var(--c-glass-border);border-radius:10px;font-size:13px}
+    .source-card a{color:#06ffa5;text-decoration:none;font-weight:600}
+    .source-card .label{display:block;font-size:11px;color:var(--c-text-dim);margin-bottom:4px;
+      text-transform:uppercase;letter-spacing:0.05em}
+
+    /* ---- 5. FEATURES ---- */
+    .features{padding:60px 24px;max-width:1100px;margin:0 auto;display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:24px}
+    .feat{padding:28px;background:var(--c-glass);border:1px solid var(--c-glass-border);
+      border-radius:18px;backdrop-filter:blur(10px);transition:transform .3s,border-color .3s}
+    .feat:hover{transform:translateY(-4px);border-color:rgba(122,62,255,0.5)}
+    .feat-icon{width:48px;height:48px;border-radius:14px;display:flex;align-items:center;justify-content:center;
+      margin-bottom:14px;background:linear-gradient(135deg,#7a3eff,#cc2c2c);
+      box-shadow:0 0 24px rgba(122,62,255,0.4)}
+    .feat-icon svg{width:24px;height:24px;fill:#fff}
+    .feat h3{font-size:18px;font-weight:700;margin-bottom:8px}
+    .feat p{font-size:14px;color:var(--c-text-dim);line-height:1.55}
+
+    /* ---- 6. CTA ---- */
+    .cta-section{padding:60px 24px;text-align:center;max-width:680px;margin:0 auto}
+    .cta-section h2{font-size:32px;font-weight:700;margin-bottom:14px}
+    .cta-section p{color:var(--c-text-dim);margin-bottom:24px}
+    .cta-btn{display:inline-flex;align-items:center;gap:10px;padding:14px 28px;border-radius:14px;
+      background:linear-gradient(135deg,#cc2c2c,#a51d1d);color:#fff;text-decoration:none;
+      font-weight:700;font-size:16px;box-shadow:0 12px 36px -8px rgba(204,44,44,0.5);
+      transition:transform .2s,box-shadow .2s}
+    .cta-btn:hover{transform:translateY(-2px);box-shadow:0 20px 50px -10px rgba(204,44,44,0.6)}
+
+    /* ---- 7. FOOTER ---- */
+    .ai-footer{padding:32px 24px;text-align:center;color:var(--c-text-dim);font-size:13px;
+      border-top:1px solid var(--c-glass-border);margin-top:40px}
+    .ai-footer a{color:#06ffa5;text-decoration:none}
+
+    /* ---- 8. REDUCED MOTION ---- */
+    @media(prefers-reduced-motion:reduce){
+      *,*::before,*::after{
+        animation-duration:0.01ms !important;
+        transition-duration:0.01ms !important;
+      }
+    }
+
+    /* ---- 9. MOBILE ---- */
+    @media(max-width:640px){
+      .chat-wrap{padding:12px}
+      .chat-card{border-radius:18px;min-height:480px;height:65vh}
+      .features{padding:40px 16px}
+    }
+  </style>
+</head>
+<body>
+
+<!-- Particle background -->
+<div class="particle-layer" id="particles"></div>
+
+<div class="ai-page">
+
+  <!-- Header / Hero -->
+  <header class="ai-header">
+    <div class="ai-logo">
+      <span class="ai-logo-dot"></span>
+      <span>2КАД · ИИ в недвижимости</span>
+    </div>
+    <h1 class="ai-title">
+      <span class="glow-char">У</span><span class="glow-char">м</span><span class="glow-char">н</span><span class="glow-char">ы</span><span class="glow-char">й</span>
+      <span>&nbsp;</span>
+      <span class="glow-char">п</span><span class="glow-char">о</span><span class="glow-char">м</span><span class="glow-char">о</span><span class="glow-char">щ</span><span class="glow-char">н</span><span class="glow-char">и</span><span class="glow-char">к</span>
+    </h1>
+    <p class="ai-subtitle">
+      Инновационные решения в&nbsp;дизайне общения с&nbsp;клиентом. ИИ-ассистент 2КАД&nbsp;— это&nbsp;быстрый ответ на&nbsp;вопросы про кадастр, межевание и&nbsp;оформление документов в&nbsp;Твери и&nbsp;Тверской области.
+    </p>
+    <div class="ai-tags">
+      <span class="ai-tag">Кадастр</span>
+      <span class="ai-tag">Межевание</span>
+      <span class="ai-tag">Техплан</span>
+      <span class="ai-tag">ГПЗУ</span>
+      <span class="ai-tag">Разрешение на строительство</span>
+      <span class="ai-tag">Выписки ЕГРН</span>
+      <span class="ai-tag">Юр. сопровождение</span>
+    </div>
+  </header>
+
+  <!-- Chat -->
+  <div class="chat-wrap">
+    <div class="chat-card">
+      <div class="chat-head">
+        <div class="chat-avatar">
+          <svg viewBox="0 0 24 24"><path d="M12 2a2 2 0 0 1 2 2c0 .74-.4 1.39-1 1.73V7h1a7 7 0 0 1 7 7h1a1 1 0 0 1 1 1v3a1 1 0 0 1-1 1h-1v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1H2a1 1 0 0 1-1-1v-3a1 1 0 0 1 1-1h1a7 7 0 0 1 7-7h1V5.73c-.6-.34-1-.99-1-1.73a2 2 0 0 1 2-2M7.5 13A2.5 2.5 0 0 0 5 15.5 2.5 2.5 0 0 0 7.5 18a2.5 2.5 0 0 0 2.5-2.5A2.5 2.5 0 0 0 7.5 13m9 0a2.5 2.5 0 0 0-2.5 2.5 2.5 2.5 0 0 0 2.5 2.5 2.5 2.5 0 0 0 2.5-2.5 2.5 2.5 0 0 0-2.5-2.5z"/></svg>
+        </div>
+        <div class="chat-info">
+          <h2>Ассистент 2КАД</h2>
+          <p><span class="live">в эфире</span> · отвечает за секунды</p>
+        </div>
+      </div>
+      <div class="chat-body" id="chat-body"></div>
+      <div class="quick-row" id="quick-row"></div>
+      <form class="chat-foot" id="chat-form">
+        <input type="text" class="chat-input" id="chat-input"
+          placeholder="Спросите про межевание, цены, документы…"
+          autocomplete="off" maxlength="500">
+        <button type="submit" class="chat-send" id="chat-send" aria-label="Отправить">→</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Features -->
+  <section class="features">
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h7v8l10-12h-7V2z"/></svg></div>
+      <h3>Мгновенный ответ</h3>
+      <p>Не ждёте менеджера — получаете ответ по типовым вопросам за&nbsp;секунды. Если нужна консультация — бот сразу даст телефон.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4m0 6c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3z"/></svg></div>
+      <h3>Знает специфику</h3>
+      <p>Обучен на&nbsp;материалах сайта 2kad.ru: услуги, цены, регламенты, формы документов, типовые ситуации в&nbsp;Твери и&nbsp;Тверской области.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M12 2A10 10 0 0 0 2 12a10 10 0 0 0 10 10 10 10 0 0 0 10-10A10 10 0 0 0 12 2m0 2a8 8 0 0 1 8 8h-2.5l-3 3-3-3H14V8h-2v1.5L9 7l-3 3h2.5v6h-3v-3.5L3 14v-2h2.5l1.5-1.5L6 11V9.5A8 8 0 0 1 12 4z"/></svg></div>
+      <h3>Контекст сессии</h3>
+      <p>Помнит предыдущие сообщения в&nbsp;диалоге. Можно уточнять, не&nbsp;повторяя контекст с&nbsp;самого начала.</p>
+    </div>
+    <div class="feat">
+      <div class="feat-icon"><svg viewBox="0 0 24 24"><path d="M21 11.5c0 5-4.5 9.5-9.5 9.5S2 16.5 2 11.5 6.5 2 11.5 2c1.4 0 2.7.3 4 .9l1.4-1.4 1.4 1.4-1.4 1.4c.6.6 1.1 1.3 1.5 2l1.5-1.5 1.4 1.4-1.5 1.5c.6 1.3.9 2.6.9 4z"/></svg></div>
+      <h3>Всегда онлайн</h3>
+      <p>Работает 24/7. Задайте вопрос в&nbsp;любое время&nbsp;— ассистент ответит, а&nbsp;для оформления заявки предложит позвонить или написать.</p>
+    </div>
+  </section>
+
+  <!-- CTA -->
+  <section class="cta-section">
+    <h2>Нужен живой специалист?</h2>
+    <p>Ассистент поможет с типовыми вопросами. Для сложных случаев — звоните, менеджер ответит лично.</p>
+    <a href="tel:+74822415768" class="cta-btn">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="#fff"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.24.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z"/></svg>
+      +7 (4822) 41-57-68
+    </a>
+  </section>
+
+  <footer class="ai-footer">
+    © 2013–2026 · ООО «Центр Недвижимости 2кад» · <a href="https://2kad.ru/">2kad.ru</a> · ИИ-ассистент — экспериментальная функция
+  </footer>
+</div>
+
+<script>
+  /* ---- Particles ---- */
+  (function(){
+    var colors = ['#7a3eff','#cc2c2c','#06ffa5','#3a86ff','#ffbe0b'];
+    var layer = document.getElementById('particles');
+    for (var i = 0; i < 60; i++){
+      var p = document.createElement('div');
+      p.className = 'particle';
+      p.style.left = Math.random() * 100 + '%';
+      p.style.color = colors[Math.floor(Math.random() * colors.length)];
+      p.style.animationDuration = (8 + Math.random() * 12) + 's';
+      p.style.animationDelay = (Math.random() * 10) + 's';
+      layer.appendChild(p);
+    }
+  })();
+
+  /* ---- Chat ---- */
+  var API_BASE = 'https://chatbot.dev.ii4ki.ru/api';
+  var sessionId = 'aipage-' + Date.now() + '-' + Math.random().toString(36).slice(2,8);
+  var sending = false;
+  var currentAi = null;
+
+  var body = document.getElementById('chat-body');
+  var form = document.getElementById('chat-form');
+  var input = document.getElementById('chat-input');
+  var sendBtn = document.getElementById('chat-send');
+  var quickRow = document.getElementById('quick-row');
+
+  var WELCOME = 'Привет! Я ИИ-ассистент 2КАД. Спрашивайте про межевание, цены, документы, регламенты — отвечу за пару секунд.';
+  var QUICK = ['Сколько стоит межевание?', 'Что такое ГПЗУ?', 'Нужен техплан', 'Разрешение на строительство'];
+
+  function escapeHtml(s){return String(s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]})}
+  function linkify(s){
+    return escapeHtml(s).replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+                          .replace(/(?<!["'>])(https?:\/\/[^\s<]+)/g, '<a href="$1" target="_blank" rel="noopener">$1</a>');
+  }
+  function addMsg(role, html, source){
+    var row = document.createElement('div');
+    row.className = 'msg ' + role;
+    var av = document.createElement('div');
+    av.className = 'msg-avatar';
+    av.textContent = role === 'user' ? 'Вы' : 'ИИ';
+    var bub = document.createElement('div');
+    bub.className = 'msg-bubble';
+    bub.innerHTML = html;
+    if (source && source.url){
+      var sc = document.createElement('div');
+      sc.className = 'source-card';
+      sc.innerHTML = '<span class="label">Источник</span>' +
+        '<a href="' + escapeHtml(source.url) + '" target="_blank" rel="noopener">' +
+        escapeHtml(source.title || source.url) + '</a>';
+      bub.appendChild(sc);
+    }
+    row.appendChild(av);
+    row.appendChild(bub);
+    body.appendChild(row);
+    body.scrollTop = body.scrollHeight;
+    return bub;
+  }
+
+  function showTyping(){
+    var row = document.createElement('div');
+    row.className = 'msg ai';
+    row.id = '__typing';
+    var av = document.createElement('div');
+    av.className = 'msg-avatar'; av.textContent = 'ИИ';
+    var bub = document.createElement('div');
+    bub.className = 'msg-bubble';
+    bub.innerHTML = '<div class="typing"><span class="typing-dot"></span><span class="typing-dot"></span><span class="typing-dot"></span></div>';
+    row.appendChild(av); row.appendChild(bub);
+    body.appendChild(row);
+    body.scrollTop = body.scrollHeight;
+    currentAi = null;
+  }
+  function hideTyping(){
+    var t = document.getElementById('__typing');
+    if (t) t.remove();
+  }
+
+  function renderQuick(){
+    quickRow.innerHTML = '';
+    QUICK.forEach(function(q){
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'quick-chip';
+      b.textContent = q;
+      b.addEventListener('click', function(){
+        input.value = q;
+        form.dispatchEvent(new Event('submit'));
+      });
+      quickRow.appendChild(b);
+    });
+  }
+
+  // Welcome message + chips
+  addMsg('ai', escapeHtml(WELCOME));
+  renderQuick();
+
+  form.addEventListener('submit', function(e){
+    e.preventDefault();
+    if (sending) return;
+    var text = input.value.trim();
+    if (!text) return;
+    sending = true;
+    sendBtn.disabled = true;
+    addMsg('user', escapeHtml(text));
+    input.value = '';
+    showTyping();
+
+    fetch(API_BASE + '/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, message: text })
+    }).then(function(r){
+      if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
+      var reader = r.body.getReader();
+      var dec = new TextDecoder();
+      var buf = '';
+      var sourceInfo = null;
+      var aiText = '';
+      var firstAiBubble = null;
+
+      function pump(){
+        return reader.read().then(function(res){
+          if (res.done) {
+            sending = false;
+            sendBtn.disabled = false;
+            return;
+          }
+          buf += dec.decode(res.value, {stream: true});
+          var lines = buf.split('\n');
+          buf = lines.pop();
+          lines.forEach(function(line){
+            if (!line) return;
+            try {
+              var ev = JSON.parse(line);
+              if (ev.type === 'meta') {
+                sourceInfo = { url: ev.page_url, title: ev.page_title };
+              } else if (ev.type === 'content') {
+                if (!firstAiBubble) {
+                  hideTyping();
+                  firstAiBubble = addMsg('ai', '', sourceInfo);
+                }
+                aiText += ev.delta;
+                firstAiBubble.firstChild ? null : null;
+                var bubChild = firstAiBubble.querySelector('.source-card') ?
+                  firstAiBubble : firstAiBubble;
+                // Replace only the text portion before source-card
+                var sc = firstAiBubble.querySelector('.source-card');
+                var textHtml = linkify(aiText);
+                if (sc) {
+                  firstAiBubble.innerHTML = textHtml;
+                  firstAiBubble.appendChild(sc);
+                } else {
+                  firstAiBubble.innerHTML = textHtml;
+                }
+                body.scrollTop = body.scrollHeight;
+              } else if (ev.type === 'replace') {
+                aiText = '';
+                if (firstAiBubble) {
+                  var sc2 = firstAiBubble.querySelector('.source-card');
+                  firstAiBubble.innerHTML = '';
+                  if (sc2) firstAiBubble.appendChild(sc2);
+                }
+              } else if (ev.type === 'error') {
+                hideTyping();
+                var friendly = (ev.message || '').toLowerCase().indexOf('stalk') < 0 &&
+                                (ev.message || '').toLowerCase().indexOf('fallback') < 0
+                                ? escapeHtml(ev.message)
+                                : 'Не удалось подготовить ответ. Позвоните +7 (4822) 41-57-68.';
+                if (!firstAiBubble) firstAiBubble = addMsg('ai', friendly, sourceInfo);
+                else firstAiBubble.innerHTML = friendly + (sourceInfo ?
+                  '<div class="source-card"><span class="label">Источник</span><a href="' +
+                  escapeHtml(sourceInfo.url) + '" target="_blank" rel="noopener">' +
+                  escapeHtml(sourceInfo.title || sourceInfo.url) + '</a></div>' : '');
+                sending = false;
+                sendBtn.disabled = false;
+                return;
+              }
+            } catch(err){}
+          });
+          return pump();
+        });
+      }
+      pump().catch(function(err){
+        hideTyping();
+        addMsg('ai', 'Ошибка соединения: ' + escapeHtml(err.message));
+        sending = false;
+        sendBtn.disabled = false;
+      });
+    }).catch(function(err){
+      hideTyping();
+      addMsg('ai', 'Ошибка соединения: ' + escapeHtml(err.message));
+      sending = false;
+      sendBtn.disabled = false;
+    });
+  });
+
+  // Esc to clear input
+  input.addEventListener('keydown', function(e){
+    if (e.key === 'Escape'){ input.value = ''; }
+  });
+  input.focus();
+</script>
+</body>
+</html>
