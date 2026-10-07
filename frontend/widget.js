@@ -30,9 +30,11 @@
     sessionId: null,
     // inline=true — встроить панель прямо в header (без плавающей кнопки).
     // inline=false (по умолчанию) — старая логика: floating button + popup.
-    inline: true,
-    // Селектор для места вставки inline-панели. По умолчанию — последний
-    // блок в header__row (после соцсетей).
+    // ВНИМАНИЕ: на 2kad.ru страница ИИ-ассистента /ai-assistant/ встраивает
+    // полноразмерный чат сама (page-level чат). Виджет остаётся для других
+    // страниц с плавающей кнопкой.
+    inline: false,
+    // Селектор для места вставки inline-панели (используется только при inline=true).
     inlineTargetSelector: ".header__socialbox",
     welcomeMessage:
       "Здравствуйте! Я виртуальный ассистент сайта 2kad.ru.\n\n" +
