@@ -28,6 +28,12 @@
     primaryColor: "#cc2c2c",
     placeholder: "Спросите про межевание, цены, документы…",
     sessionId: null,
+    // inline=true — встроить панель прямо в header (без плавающей кнопки).
+    // inline=false (по умолчанию) — старая логика: floating button + popup.
+    inline: true,
+    // Селектор для места вставки inline-панели. По умолчанию — последний
+    // блок в header__row (после соцсетей).
+    inlineTargetSelector: ".header__socialbox",
     welcomeMessage:
       "Здравствуйте! Я виртуальный ассистент сайта 2kad.ru.\n\n" +
       "⚠️ Бот находится в стадии разработки — часть ответов может быть неточной. " +
@@ -235,6 +241,23 @@
     ".kad-chatbot-panel.open{display:flex;animation:kadSlide .25s ease}",
     "@keyframes kadSlide{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}",
 
+    // ---- Inline mode (встроен в header) ----
+    // Контейнер-лист (li) — для AI-иконки в соцсетях
+    ".kad-chatbot-header-item{list-style:none;display:flex;align-items:center;margin-left:8px;position:relative}",
+    // В inline режиме панель всегда видна, без popup-логики
+    ".kad-chatbot-panel--inline{position:absolute;top:calc(100% + 8px);right:0;",
+    "display:flex;flex-direction:column;width:360px;height:520px;",
+    "background:#fff;border-radius:14px;box-shadow:0 12px 40px rgba(0,0,0,.18);",
+    "border:1px solid #e5e7eb;z-index:999999;overflow:hidden;",
+    "animation:kadSlide .25s ease}",
+    ".kad-chatbot-panel--inline .kad-chatbot-close{display:none}", // в header нельзя закрыть
+    // Мобилка: панель во всю ширину экрана сверху
+    "@media(max-width:768px){",
+    ".kad-chatbot-panel--inline{position:fixed;top:80px;left:8px;right:8px;width:auto;",
+    "height:calc(100vh - 100px);max-height:520px;border-radius:14px}",
+    ".kad-chatbot-panel--inline .kad-chatbot-expand{display:none}",
+    "}",
+
     // ---- Полноэкранный режим ----
     ".kad-chatbot-panel.expanded{width:calc(50vw - 24px);height:calc(100vh - 48px);top:24px;right:24px;border-radius:16px}",
     ".kad-chatbot-panel.expanded .kad-chatbot-body{font-size:14px}",
@@ -354,19 +377,23 @@
   document.head.appendChild(style);
 
   // ---- DOM ----
-  var btn = document.createElement("button");
-  btn.className = "kad-chatbot-btn";
-  btn.title = "Открыть чат с AI-ассистентом 2КАД";
-  btn.setAttribute("aria-label", "Открыть чат с AI-ассистентом 2КАД");
-  btn.innerHTML =
-    "<span class='pulse'></span>" +
-    ROBOT_SVG +
-    "<span class='ai-label'>AI</span>" +
-    "<span class='badge'>1</span>";
-  document.body.appendChild(btn);
+  // В inline mode НЕ показываем плавающую кнопку — панель всегда видна в header.
+  var btn = null;
+  if (!CFG.inline) {
+    btn = document.createElement("button");
+    btn.className = "kad-chatbot-btn";
+    btn.title = "Открыть чат с AI-ассистентом 2КАД";
+    btn.setAttribute("aria-label", "Открыть чат с AI-ассистентом 2КАД");
+    btn.innerHTML =
+      "<span class='pulse'></span>" +
+      ROBOT_SVG +
+      "<span class='ai-label'>AI</span>" +
+      "<span class='badge'>1</span>";
+    document.body.appendChild(btn);
+  }
 
   var panel = document.createElement("div");
-  panel.className = "kad-chatbot-panel";
+  panel.className = "kad-chatbot-panel" + (CFG.inline ? " kad-chatbot-panel--inline" : "");
   panel.innerHTML =
     "<div class='kad-chatbot-header'>" +
       "<div>" +
@@ -391,7 +418,25 @@
       "<input type='text' placeholder='' autocomplete='off' />" +
       "<button aria-label='Отправить'>→</button>" +
     "</div>";
-  document.body.appendChild(panel);
+
+  // Inline mode: панель встраивается в header (по умолчанию после соцсетей).
+  // Иначе — плавающий popup как раньше.
+  if (CFG.inline) {
+    var target = document.querySelector(CFG.inlineTargetSelector);
+    if (target) {
+      // Создаём контейнер-лист с AI-иконкой
+      var li = document.createElement("li");
+      li.className = "kad-chatbot-header-item";
+      target.appendChild(li);
+      li.appendChild(panel);
+    } else {
+      // Fallback: header__row или body
+      var fallbackTarget = document.querySelector(".header__row") || document.body;
+      fallbackTarget.appendChild(panel);
+    }
+  } else {
+    document.body.appendChild(panel);
+  }
 
   panel.querySelector("h3 span").textContent = CFG.title;
   panel.querySelector("p").textContent = CFG.subtitle;
@@ -532,7 +577,7 @@
 
   function open() {
     panel.classList.add("open");
-    badge.style.display = "none";
+    if (badge) badge.style.display = "none";
     if (!body.dataset.welcomed) {
       addMsg("assistant", CFG.welcomeMessage);
       body.dataset.welcomed = "1";
@@ -543,6 +588,12 @@
     panel.classList.remove("open");
     panel.classList.remove("expanded");
     if (expandBtn) expandBtn.innerHTML = EXPAND_SVG;
+  }
+
+  // В inline mode панель всегда открыта — вызываем open() сразу.
+  if (CFG.inline) {
+    // Ставим сразу после привязки DOM.
+    setTimeout(function () { open(); }, 0);
   }
 
   function toggleExpand() {
@@ -560,9 +611,11 @@
     }
   }
 
-  btn.addEventListener("click", function () {
-    if (panel.classList.contains("open")) close(); else open();
-  });
+  if (btn) {
+    btn.addEventListener("click", function () {
+      if (panel.classList.contains("open")) close(); else open();
+    });
+  }
   panel.querySelector(".kad-chatbot-close").addEventListener("click", close);
   expandBtn.addEventListener("click", toggleExpand);
 
