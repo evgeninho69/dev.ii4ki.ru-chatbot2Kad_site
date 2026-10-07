@@ -19,7 +19,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -338,6 +338,23 @@ if STATIC_DIR.exists():
         StaticFiles(directory=str(STATIC_DIR)),
         name="widget",
     )
+
+    # Маршрут для страницы ИИ-ассистента на 2kad.ru (/ai-assistant/).
+    # WP-страница с этим slug делает redirect сюда (или iframe).
+    @app.get("/ai-assistant", response_class=HTMLResponse)
+    async def ai_assistant_page():
+        ai_path = STATIC_DIR / "ai-assistant.html"
+        if ai_path.exists():
+            return HTMLResponse(content=ai_path.read_text(encoding="utf-8"))
+        return HTMLResponse(
+            content="<h1>AI Assistant page not found</h1>",
+            status_code=404,
+        )
+
+    # Дополнительный алиас — отдаём по / и /ai
+    @app.get("/ai-page", response_class=HTMLResponse)
+    async def ai_page_alias():
+        return await ai_assistant_page()
 
 
 if __name__ == "__main__":
