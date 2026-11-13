@@ -1,26 +1,39 @@
 # -*- coding: utf-8 -*-
-"""Клиент Mistral AI API для 2KAD-чатбота.
+"""Клиент LLM для 2KAD-чатбота (все провайдеры — OpenAI-совместимые).
 
-Использует OpenAI-совместимый endpoint: https://api.mistral.ai/v1/chat/completions.
+Провайдеры выбираются по env и образуют **цепочку** (первый доступный — основной,
+остальные — запасные, переключение происходит автоматически при сбое):
 
-КЛЮЧЕВЫЕ ОТЛИЧИЯ от предыдущих версий:
+| # | Провайдер  | Ключ в env            | Base URL по умолчанию      | Модель по умолчанию   |
+|---|------------|-----------------------|----------------------------|-----------------------|
+| 1 | DeepSeek   | DEEPSEEK_API_KEY      | https://api.deepseek.com  | deepseek-flash        |
+| 2 | AnyModel   | ANYMODEL_API_KEY      | https://anymodel.org/v1   | am/gpt-oss-20b        |
+| 3 | Mistral    | MISTRAL_API_KEY       | https://api.mistral.ai/v1 | ministral-8b-latest   |
+
+КЛЮЧЕВЫЕ ОСОБЕННОСТИ:
 
 1. **Real streaming по сети** — `client.stream("POST", ...)` + `aiter_lines()`,
    каждый chunk сразу в StreamingResponse.
 
-2. **STALL DETECTION** (ГЛАВНАЯ ПРОБЛЕМА FREE TIER):
-   Mistral free-tier присылает 2-4 символа ответа, потом **зависает на 60-120 сек**,
-   не закрывая соединение. Клиент (браузер виджета) устаёт ждать и выдаёт ReadTimeout.
-   Решение: если за 15 сек не пришло ни одного chunk — НЕМЕДЛЕННЫЙ fallback на
-   `mistral-tiny`. Каждый chunk сбрасывает счётчик (rolling timeout).
+2. **STALL DETECTION** — если за STALL_TIMEOUT_S секунд не пришло ни одного chunk'а,
+   считаем, что провайдер завис, и переключаемся на следующего в цепочке.
+   Каждый полученный chunk сбрасывает счётчик (rolling timeout).
 
 3. **Retry 429** (rate-limit) — 2 попытки с backoff.
 
-4. **Fallback once** на `mistral-tiny` при: 5xx, ConnectError, ReadTimeout, stall.
+4. **Fallback по цепочке** — при 5xx / ConnectError / ReadTimeout / stall / обрыве
+   стрима берётся следующий провайдер (или запасная модель того же провайдера,
+   если задана переменная *_FALLBACK_MODEL).
+
+5. **DeepSeek thinking mode** — по умолчанию выключен (`DEEPSEEK_THINKING=disabled`):
+   для чата на сайте важна скорость. Если включить — модель присылает
+   `reasoning_content`, он отдаётся отдельным событием "reasoning".
 
 Переменные окружения:
-- MISTRAL_API_KEY  — обязательно
-- MISTRAL_MODEL    — модель (по умолчанию ministral-8b-latest)
+- DEEPSEEK_API_KEY / DEEPSEEK_API_BASE / DEEPSEEK_MODEL / DEEPSEEK_FALLBACK_MODEL
+- ANYMODEL_API_KEY  / ANYMODEL_API_BASE  / ANYMODEL_MODEL  / ANYMODEL_FALLBACK_MODEL
+- MISTRAL_API_KEY   / MISTRAL_API_BASE   / MISTRAL_MODEL   / MISTRAL_FALLBACK_MODEL
+- DEEPSEEK_THINKING — enabled | disabled (по умолчанию disabled)
 """
 from __future__ import annotations
 
@@ -35,27 +48,143 @@ import httpx
 # Сколько секунд ждать следующий chunk. Каждый полученный chunk сбрасывает таймер.
 STALL_TIMEOUT_S = 15.0
 
+# Описание провайдеров. Поля:
+#   key_env / base_env / model_env — имена переменных окружения
+#   default_base / default_model   — значения по умолчанию
+#   default_fallback_model         — запасная модель внутри провайдера (необязательно)
+PROVIDERS = [
+    {
+        "name": "deepseek",
+        "key_env": "DEEPSEEK_API_KEY",
+        "base_env": "DEEPSEEK_API_BASE",
+        "default_base": "https://api.deepseek.com",
+        "model_env": "DEEPSEEK_MODEL",
+        "default_model": "deepseek-flash",
+        "fallback_model_env": "DEEPSEEK_FALLBACK_MODEL",
+        "default_fallback_model": "",
+    },
+    {
+        "name": "anymodel",
+        "key_env": "ANYMODEL_API_KEY",
+        "base_env": "ANYMODEL_API_BASE",
+        "default_base": "https://anymodel.org/v1",
+        "model_env": "ANYMODEL_MODEL",
+        "default_model": "am/gpt-oss-20b",
+        "fallback_model_env": "ANYMODEL_FALLBACK_MODEL",
+        "default_fallback_model": "",
+    },
+    {
+        "name": "mistral",
+        "key_env": "MISTRAL_API_KEY",
+        "base_env": "MISTRAL_API_BASE",
+        "default_base": "https://api.mistral.ai/v1",
+        "model_env": "MISTRAL_MODEL",
+        "default_model": "ministral-8b-latest",
+        "fallback_model_env": "MISTRAL_FALLBACK_MODEL",
+        "default_fallback_model": "mistral-tiny",
+    },
+]
+
+
+def _deepseek_extra() -> Dict:
+    """Доп. поля запроса для DeepSeek (thinking mode)."""
+    mode = os.environ.get("DEEPSEEK_THINKING", "disabled").strip().lower()
+    if mode in ("enabled", "on", "true", "1"):
+        return {"thinking": {"type": "enabled"}}
+    return {"thinking": {"type": "disabled"}}
+
+
+def build_chain() -> List[Dict]:
+    """Собирает цепочку провайдеров из env.
+
+    Порядок: DeepSeek → AnyModel → Mistral. Провайдер без ключа пропускается.
+    Если у провайдера задана *_FALLBACK_MODEL — она становится следующей целью
+    цепочки (перед следующим провайдером).
+    """
+    chain: List[Dict] = []
+    for p in PROVIDERS:
+        key = os.environ.get(p["key_env"], "").strip()
+        if not key:
+            continue
+        base = os.environ.get(p["base_env"], "").strip() or p["default_base"]
+        model = os.environ.get(p["model_env"], "").strip() or p["default_model"]
+        extra = _deepseek_extra() if p["name"] == "deepseek" else {}
+
+        chain.append({
+            "name": p["name"],
+            "base_url": base.rstrip("/"),
+            "api_key": key,
+            "model": model,
+            "extra": extra,
+        })
+
+        fb = os.environ.get(p["fallback_model_env"], "").strip() or p["default_fallback_model"]
+        if fb and fb != model:
+            chain.append({
+                "name": f"{p['name']}:fallback",
+                "base_url": base.rstrip("/"),
+                "api_key": key,
+                "model": fb,
+                "extra": extra,
+            })
+    return chain
+
 
 class AnyModelClient:
-    """Backward-compat имя класса. Использует Mistral API."""
+    """Backward-compat имя класса. Провайдер выбирается по env (см. build_chain)."""
 
-    BASE_URL = "https://api.mistral.ai/v1"
-    DEFAULT_MODEL = "ministral-8b-latest"
-    FALLBACK_MODEL = "mistral-tiny"
+    def __init__(
+        self,
+        api_key: Optional[str] = None,
+        model: Optional[str] = None,
+        provider: Optional[str] = None,
+    ):
+        chain = build_chain()
 
-    def __init__(self, api_key: Optional[str] = None, model: Optional[str] = None):
-        self.api_key = api_key or os.environ.get("MISTRAL_API_KEY", "")
-        if not self.api_key:
+        # Явные аргументы — для тестов и нестандартных развёртываний.
+        if api_key:
+            chain.insert(0, {
+                "name": provider or "custom",
+                "base_url": os.environ.get("CUSTOM_API_BASE", "https://api.deepseek.com").rstrip("/"),
+                "api_key": api_key,
+                "model": model or os.environ.get("DEEPSEEK_MODEL", "deepseek-flash"),
+                "extra": _deepseek_extra(),
+            })
+        elif provider:
+            chain = [t for t in chain if t["name"].split(":")[0] == provider] + \
+                    [t for t in chain if t["name"].split(":")[0] != provider]
+
+        if not chain:
             raise ValueError(
-                "MISTRAL_API_KEY is required. "
-                "Get one at https://console.mistral.ai and put it in .env or env var."
+                "No LLM provider configured. Set one of: "
+                "DEEPSEEK_API_KEY (https://platform.deepseek.com/api_keys), "
+                "ANYMODEL_API_KEY (https://anymodel.org), "
+                "MISTRAL_API_KEY (https://console.mistral.ai) "
+                "in .env or env vars."
             )
-        self.model = model or os.environ.get("MISTRAL_MODEL", self.DEFAULT_MODEL)
-        self.fallback_model = self.FALLBACK_MODEL
+
+        self.chain = chain
+        self._idx = 0
+
+        # Атрибуты для backward-compat (код, который смотрит на .model / .api_key).
+        self.api_key = chain[0]["api_key"]
+        self.model = chain[0]["model"]
+        self.base_url = chain[0]["base_url"]
+        self.fallback_model = chain[1]["model"] if len(chain) > 1 else ""
+
+    # ---------- свойства текущей цели ----------
+
+    @property
+    def target(self) -> Dict:
+        return self.chain[self._idx]
+
+    @property
+    def provider(self) -> str:
+        return self.target["name"]
 
     def _headers(self) -> Dict[str, str]:
         return {
-            "Authorization": f"Bearer {self.api_key}",
+            "Authorization": f"Bearer {self.target['api_key']}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
@@ -68,7 +197,7 @@ class AnyModelClient:
         temperature: float = 0.3,
         fallback: bool = True,
     ) -> AsyncGenerator[Dict, None]:
-        """Стримит ответ от Mistral с stall-detection и fallback."""
+        """Стримит ответ от LLM с stall-detection и переключением провайдера."""
         async for ev in self._stream_once(
             messages, model=model,
             max_tokens=max_tokens, temperature=temperature,
@@ -87,14 +216,18 @@ class AnyModelClient:
         used_fallback: bool,
         tried_fallback: list,
     ) -> AsyncGenerator[Dict, None]:
-        url = f"{self.BASE_URL}/chat/completions"
+        target = self.target
+        used_model = model or target["model"]
+        url = f"{target['base_url']}/chat/completions"
         payload = {
-            "model": model or self.model,
+            "model": used_model,
             "messages": messages,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": True,
         }
+        # Доп. поля провайдера (для DeepSeek — thinking mode).
+        payload.update(target.get("extra") or {})
 
         # CoT-фильтр: некоторые модели вставляют в content рассуждения.
         import re as _re
@@ -110,27 +243,38 @@ class AnyModelClient:
         )
         _state = {"in_cot": None, "buf": ""}
 
-        # HTTP таймауты. Read — большой (Mistral в принципе может отвечать долго),
+        # HTTP-таймауты. Read — большой (провайдер в принципе может отвечать долго),
         # но stall detection сработает раньше.
         timeout_cfg = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
 
         async def _do_fallback(reason: str) -> AsyncGenerator[Dict, None]:
-            """Один fallback на mistral-tiny. Если и там провал — error."""
+            """Переключение на следующую цель цепочки. Если её нет — error."""
             nonlocal used_fallback
-            if not fallback_allowed or used_fallback:
+            if not fallback_allowed:
                 yield {
                     "type": "error",
                     "message": f"{reason} (fallback already used)",
                 }
                 return
             used_fallback = True
-            tried_fallback.append(model or self.model)
-            # Fallback с укороченным stall timeout — если и тут зависнет,
+            tried_fallback.append(f"{target['name']}:{used_model}")
+            if self._idx + 1 >= len(self.chain):
+                yield {
+                    "type": "error",
+                    "message": (
+                        f"{reason} (нет запасного провайдера; "
+                        f"пройдено: {', '.join(tried_fallback) or '—'})"
+                    ),
+                }
+                return
+            self._idx += 1
+            nxt = self.target
+            # Запасной провайдер с укороченным stall timeout — если и тут зависнет,
             # даём виджету шанс ответить хотя бы фразой «уточните».
             async for ev in self._stream_once(
-                messages, model=self.fallback_model,
+                messages, model=None,
                 max_tokens=max_tokens, temperature=temperature,
-                fallback_allowed=False, used_fallback=True,
+                fallback_allowed=True, used_fallback=True,
                 tried_fallback=tried_fallback,
             ):
                 yield ev
@@ -153,7 +297,10 @@ class AnyModelClient:
                         if resp.status_code != 200:
                             err_body = await resp.aread()
                             err_text = err_body.decode("utf-8", errors="replace")[:500]
-                            reason = f"HTTP {resp.status_code}: {err_text}"
+                            reason = (
+                                f"HTTP {resp.status_code} "
+                                f"[{target['name']}/{used_model}]: {err_text}"
+                            )
                             async for ev in _do_fallback(reason):
                                 yield ev
                             return
@@ -172,14 +319,14 @@ class AnyModelClient:
                                         timeout=STALL_TIMEOUT_S,
                                     )
                                 except StopAsyncIteration:
-                                    # Mistral закрыл стрим без [DONE]
+                                    # Провайдер закрыл стрим без [DONE]
                                     break
                                 except asyncio.TimeoutError:
                                     # Stall: N секунд без chunk'а
                                     reason = (
-                                        f"stall: Mistral не присылал chunk'и "
+                                        f"stall: {target['name']} не присылал chunk'и "
                                         f">{STALL_TIMEOUT_S:.0f} сек "
-                                        f"(модель: {model or self.model})"
+                                        f"(модель: {used_model})"
                                     )
                                     async for ev in _do_fallback(reason):
                                         yield ev
@@ -207,7 +354,10 @@ class AnyModelClient:
                                         else str(err)
                                     )
                                     had_error = True
-                                    reason = f"upstream error: {msg}"
+                                    reason = (
+                                        f"upstream error "
+                                        f"[{target['name']}/{used_model}]: {msg}"
+                                    )
                                     async for ev in _do_fallback(reason):
                                         yield ev
                                     return
@@ -257,15 +407,19 @@ class AnyModelClient:
 
                         except httpx.ReadTimeout:
                             reason = (
-                                f"ReadTimeout: Mistral не ответил за 120 сек "
-                                f"(модель: {model or self.model})"
+                                f"ReadTimeout: {target['name']} не ответил за 120 сек "
+                                f"(модель: {used_model})"
                             )
                             async for ev in _do_fallback(reason):
                                 yield ev
                             return
                         except httpx.HTTPError as e:
                             e_name = type(e).__name__
-                            reason = f"HTTP error [{e_name}]: {str(e).strip() or '(без описания)'}"
+                            reason = (
+                                f"HTTP error [{e_name}] "
+                                f"[{target['name']}/{used_model}]: "
+                                f"{str(e).strip() or '(без описания)'}"
+                            )
                             async for ev in _do_fallback(reason):
                                 yield ev
                             return
@@ -277,16 +431,17 @@ class AnyModelClient:
 
                         if not saw_done and not had_error:
                             # Стрим оборвался без [DONE] и без ошибки.
-                            # Это типичный stall free-tier: 2-4 чанка и тишина.
-                            # Если хоть что-то успели — пробуем fallback,
+                            # Это типичный stall: 2-4 чанка и тишина.
+                            # Если хоть что-то успели — пробуем запасного провайдера,
                             # иначе сразу error.
                             if _state["buf"].strip() or _state["in_cot"] is False:
-                                # Был реальный контент — пусть fallback попробует
-                                # ещё раз, иногда mistral-tiny стримит чище.
+                                # Был реальный контент — пусть запасной провайдер
+                                # попробует ещё раз.
                                 reason = (
                                     f"stream ended without [DONE] после "
-                                    f"{len(_state['buf'])} чанков (модель: "
-                                    f"{model or self.model})"
+                                    f"{len(_state['buf'])} чанков "
+                                    f"(провайдер: {target['name']}, "
+                                    f"модель: {used_model})"
                                 )
                                 async for ev in _do_fallback(reason):
                                     yield ev
@@ -301,7 +456,10 @@ class AnyModelClient:
             except httpx.HTTPError as e:
                 # ConnectError, NetworkError и т.п.
                 e_name = type(e).__name__
-                reason = f"HTTP error [{e_name}]: {str(e).strip() or '(без описания)'}"
+                reason = (
+                    f"HTTP error [{e_name}] [{target['name']}/{used_model}]: "
+                    f"{str(e).strip() or '(без описания)'}"
+                )
                 async for ev in _do_fallback(reason):
                     yield ev
                 return
@@ -332,3 +490,7 @@ class AnyModelClient:
             msg = last_error or "model returned empty response (upstream timeout?)"
             raise RuntimeError(msg)
         return content.strip()
+
+
+# Понятное имя для нового кода (старые импорты AnyModelClient работают как раньше).
+LLMClient = AnyModelClient

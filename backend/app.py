@@ -79,17 +79,37 @@ def get_llm() -> AnyModelClient:
 
 
 def llm_status() -> Dict:
-    """Активный провайдер LLM и цепочка запасных — для /api/health."""
+    """Активный провайдер LLM и цепочка запасных — для /api/health.
+
+    Health не должен падать ни при каких настройках: недостающие атрибуты
+    клиента читаются через getattr. Иначе 500 на /api/health роняет
+    docker-healthcheck, контейнер уходит в рестарт-цикл, а Traefik
+    начинает отдавать 502.
+    """
     try:
         client = get_llm()
     except Exception as e:  # ключи не заданы — health не должен падать
         return {"configured": False, "error": str(e)[:200]}
-    return {
-        "configured": True,
-        "provider": client.provider,
-        "model": client.model,
-        "chain": [f"{t['name']}:{t['model']}" for t in client.chain],
-    }
+    try:
+        chain = [
+            f"{t.get('name', '?')}:{t.get('model', '?')}"
+            for t in (getattr(client, "chain", None) or [])
+            if isinstance(t, dict)
+        ]
+        provider = getattr(client, "provider", None)
+        if not provider and chain:
+            provider = chain[0].split(":")[0]
+        model = getattr(client, "model", None)
+        if not model and chain:
+            model = chain[0].split(":", 1)[-1]
+        return {
+            "configured": True,
+            "provider": provider,
+            "model": model,
+            "chain": chain,
+        }
+    except Exception as e:
+        return {"configured": True, "error": str(e)[:200]}
 
 
 # ---------- FastAPI ----------
@@ -146,12 +166,22 @@ def get_or_create_session(session_id: Optional[str]) -> str:
 # ---------- endpoints ----------
 @app.get("/api/health")
 async def health():
-    return {
-        "status": "ok",
-        "time": int(time.time()),
-        "index_loaded": _site_index is not None,
-        "llm": llm_status(),
-    }
+    """Health-check контейнера. Всегда 200 — иначе docker/swarm роняет
+    реплику, а домен отдаёт 502."""
+    try:
+        return {
+            "status": "ok",
+            "time": int(time.time()),
+            "index_loaded": _site_index is not None,
+            "llm": llm_status(),
+        }
+    except Exception as e:  # pragma: no cover — health не должен падать
+        log.exception("health check failed")
+        return {
+            "status": "degraded",
+            "time": int(time.time()),
+            "error": str(e)[:200],
+        }
 
 
 @app.get("/api/index-stats")
