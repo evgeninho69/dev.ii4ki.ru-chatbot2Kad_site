@@ -78,6 +78,20 @@ def get_llm() -> AnyModelClient:
     return _llm
 
 
+def llm_status() -> Dict:
+    """Активный провайдер LLM и цепочка запасных — для /api/health."""
+    try:
+        client = get_llm()
+    except Exception as e:  # ключи не заданы — health не должен падать
+        return {"configured": False, "error": str(e)[:200]}
+    return {
+        "configured": True,
+        "provider": client.provider,
+        "model": client.model,
+        "chain": [f"{t['name']}:{t['model']}" for t in client.chain],
+    }
+
+
 # ---------- FastAPI ----------
 app = FastAPI(
     title="2KAD Chatbot API",
@@ -136,6 +150,7 @@ async def health():
         "status": "ok",
         "time": int(time.time()),
         "index_loaded": _site_index is not None,
+        "llm": llm_status(),
     }
 
 
@@ -146,7 +161,46 @@ async def index_stats():
         "pages": len(idx.pages),
         "site": idx.data.get("site"),
         "company": idx.data.get("company"),
+        **idx.stats(),
     }
+
+
+@app.get("/api/recent-posts")
+async def recent_posts(limit: int = 6):
+    """Свежие материалы блога — для врезки «Свежие материалы» на странице
+    ИИ-ассистента. Отдаём реальные заголовки, рубрики, даты и ссылки."""
+    idx = get_index()
+    n = max(1, min(limit, 12))
+    items = []
+    for p in idx.recent_posts(n):
+        items.append({
+            "id": p.get("id"),
+            "title": p.get("title", ""),
+            "url": p.get("url", ""),
+            "date": p.get("date", ""),
+            "rubric": (p.get("category_names") or ["Блог"])[0],
+            "excerpt": (p.get("excerpt") or "")[:220],
+        })
+    return {"items": items, "total_posts": idx.stats().get("posts", 0)}
+
+
+@app.get("/api/suggestions")
+async def suggestions(limit: int = 8):
+    """Темы для быстрых вопросов — берём из заголовков блога,
+    чтобы подсказки совпадали с реальным содержимым базы знаний."""
+    idx = get_index()
+    n = max(1, min(limit, 12))
+    out = []
+    seen = set()
+    for p in idx.recent_posts(40):
+        t = (p.get("title") or "").strip()
+        if not t or t in seen:
+            continue
+        seen.add(t)
+        out.append({"title": t, "url": p.get("url", "")})
+        if len(out) >= n:
+            break
+    return {"items": out}
 
 
 @app.post("/api/chat")
@@ -183,6 +237,15 @@ async def chat(req: ChatRequest):
                 "mode": decision.mode,
                 "page_url": decision.page["url"] if decision.page else None,
                 "page_title": decision.page["title"] if decision.page else None,
+                "source_kind": decision.source_kind or None,
+                "source_rubric": (
+                    (decision.page.get("category_names") or [None])[0]
+                    if decision.page and decision.page.get("category_names")
+                    else None
+                ),
+                "source_date": (
+                    decision.page.get("date") if decision.page else None
+                ),
             }, ensure_ascii=False).encode() + b"\n"
 
             try:
