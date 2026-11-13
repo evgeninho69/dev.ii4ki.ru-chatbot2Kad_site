@@ -165,7 +165,7 @@ class QueryRouter:
         ассистент перечислял только первое изменение.
         """
         excerpt = (post.get("excerpt") or "").strip()
-        body = self._truncate(post.get("content", ""), 2800)
+        body = self._truncate(post.get("content", ""), 5000)
         if excerpt and excerpt[:60] not in body:
             return f"{excerpt}\n\n{body}"
         return body
