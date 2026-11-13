@@ -72,6 +72,21 @@ def normalize_query(text: str) -> List[str]:
     return tokenize(text)
 
 
+def _same_root(a: str, b: str) -> bool:
+    """Одинаковый корень слова: «экспертизы» ~ «экспертиза».
+
+    Нужен для сопоставления названий видов работ в прайсе с вопросом
+    пользователя, где слово стоит в падежной форме. Допускаем до двух
+    различающихся окончаний («землеустроительной» ~ «землеустроительная»).
+    """
+    if a == b:
+        return True
+    n = min(len(a), len(b)) - 2
+    if n < 5:
+        return False
+    return a[:n] == b[:n]
+
+
 def normalize_act(text: str) -> str:
     """«П / 0393 / 26» → «П/0393/26», «305 - ФЗ» → «305-ФЗ»."""
     s = re.sub(r"\s+", "", text or "")
@@ -91,6 +106,7 @@ class SiteIndex:
         self._slug_tokens: Dict[str, List[str]] = {}
         self._doc_freq: Dict[str, int] = {}
         self._doc_len: Dict[str, int] = {}
+        self._price_rows: Optional[List[Dict]] = None
         self._doc_type: Dict[str, str] = {}
         self._tf: Dict[str, Dict[str, int]] = {}
 
@@ -290,6 +306,85 @@ class SiteIndex:
             if p.get("slug") == slug:
                 return p
         return None
+
+    # ---------------- публичный прайс ----------------
+    #
+    # Цены берутся ДОСЛОВНО со страницы /ceny-biznes/ — это единственный
+    # источник, который ассистент вправе называть пользователю. Никаких
+    # «примерно», никаких цифр из памяти модели.
+    #
+    # Строка прайса в индексе выглядит так (4 строки подряд):
+    #   Технический план (здание, МКД, ОНС, помещение)
+    #   от 15 000 ₽
+    #   5–10 рабочих дней
+    #   Технический план, зарегистрированный в ЕГРН
+    _PRICE_ROW_RE = re.compile(
+        r"^([^\n]+)\n(от\s*[\d\s\u00a0]+\s*₽)\n([^\n]+)\n([^\n]+)$", re.M)
+
+    def price_rows(self) -> List[Dict]:
+        """Публичный прайс 2КАД: [{work, price, term}, ...]."""
+        if self._price_rows is None:
+            rows: List[Dict] = []
+            doc = self.get("ceny-biznes") or {}
+            text = doc.get("content") or ""
+            for m in self._PRICE_ROW_RE.finditer(text):
+                work = m.group(1).strip()
+                # «Стоимость» / «Срок» — это заголовки таблицы, а не вид работы
+                if work.lower() in ("вид работы", "стоимость", "срок",
+                                     "итоговый документ"):
+                    continue
+                rows.append({
+                    "work": work,
+                    "price": re.sub(r"\s+", " ", m.group(2).strip()),
+                    "term": m.group(3).strip(),
+                })
+            self._price_rows = rows
+        return self._price_rows
+
+    def price_context(self) -> str:
+        """Прайс как блок контекста для промпта."""
+        rows = self.price_rows()
+        if not rows:
+            return ""
+        lines = [f"- {r['work']} — {r['price']} ({r['term']})" for r in rows]
+        block = ("ПУБЛИЧНЫЙ ПРАЙС 2КАД (страница «Стоимость кадастровых работ "
+                 "для организаций», /ceny-biznes/):\n" + "\n".join(lines))
+
+        # Раздел «Часть по стоимости»: варианты (сложный, вспомогательный,
+        # линейный объект) и правила выезда — их нет в основной таблице.
+        doc = self.get("ceny-biznes") or {}
+        text = doc.get("content") or ""
+        start = text.find("Часть по стоимости")
+        end = text.find("Рассчитаем стоимость по вашему объекту")
+        if start != -1 and end > start:
+            faq = text[start:end].strip()
+            if len(faq) > 1200:
+                faq = faq[:1200].rsplit("\n", 1)[0]
+            block += ("\n\nУТОЧНЕНИЯ ПО СТОИМОСТИ (с той же страницы):\n" + faq)
+        return block
+
+    def price_match(self, query: str) -> Optional[Dict]:
+        """Строка прайса, соответствующая вопросу (по совпадению слов).
+
+        Сравнение мягкое — по общему началу слова: «землеустроительной» из
+        вопроса должен найти «Землеустроительная» из прайса.
+        """
+        rows = self.price_rows()
+        if not rows:
+            return None
+        q = tokenize(query)
+        best, best_score = None, 0
+        for r in rows:
+            t = tokenize(r["work"])
+            score = 0
+            for a in q:
+                for b in t:
+                    if _same_root(a, b):
+                        score += 1
+                        break
+            if score > best_score:
+                best, best_score = r, score
+        return best if best_score > 0 else None
 
     def best_passages(self, query: str, doc: Dict, max_sentences: int = 4,
                       max_chars: int = 800) -> str:

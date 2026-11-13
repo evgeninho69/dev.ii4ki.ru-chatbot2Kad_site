@@ -194,6 +194,7 @@ class QueryRouter:
             link_doc = self._best_link([page]) or calculator
             link = self._link_fields(link_doc, meta)
             prompt = PRICING_PROMPT.format(
+                price_context=self.idx.price_context(),
                 calculator_context=calc_excerpt,
                 service_context=service_ctx,
                 calculator_url=meta["calculator_url"],
