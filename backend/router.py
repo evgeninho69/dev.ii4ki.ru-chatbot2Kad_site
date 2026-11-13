@@ -317,7 +317,37 @@ class QueryRouter:
                     law_doc=act_doc,
                 )
 
-        # ---------- 4. Законодательный вопрос по маркерам ----------
+        # ---------- 4. Статья блога по карте тем ----------
+        # Если карта тем указывает на статью блога — отвечаем по ней: это
+        # разбор 2КАД, а не абстрактный нормативный документ. Так вопрос
+        # «что изменилось в приказах Росреестра» ведёт на обзор изменений
+        # за квартал, а не на один случайный приказ из базы ki-rf.
+        if topic_doc is not None and topic_doc.get("type") == "post":
+            link_doc = self._best_link([topic_doc]) or topic_doc
+            link = self._link_fields(link_doc, meta)
+            cats = ", ".join(topic_doc.get("category_names") or []) or "Блог"
+            prompt = ARTICLE_PROMPT.format(
+                post_title=self._esc(topic_doc.get("title", "")),
+                post_url=topic_doc.get("url", ""),
+                post_content=self._esc(self._truncate(topic_doc.get("content", ""), 1600)),
+                post_category=self._esc(cats),
+                post_date=topic_doc.get("date", ""),
+                phone=meta["phone"],
+                **link,
+            )
+            return RoutingDecision(
+                mode="article",
+                page=topic_doc,
+                system_prompt=prompt,
+                found_title=topic_doc.get("title", ""),
+                found_url=topic_doc.get("url", ""),
+                source_kind="blog",
+                link_doc=link_doc,
+                link_title=link["link_title"],
+                link_url=link["link_url"],
+            )
+
+        # ---------- 5. Законодательный вопрос по маркерам ----------
         if law_hint and law and s_law >= max(4.0, 0.6 * s_post):
             # Если страница 2КАД по теме называет конкретный приказ —
             # берём именно его, а не документ, который нашёлся по совпадению
@@ -362,7 +392,7 @@ class QueryRouter:
                 law_doc=act_doc,
             )
 
-        # ---------- 5. Материал 2КАД ----------
+        # ---------- 6. Материал 2КАД ----------
         # Приоритет: карта тем → страница услуги → статья блога.
         # Карта тем отображает вопрос на нужный материал детерминированно,
         # поэтому она важнее результатов поиска.
@@ -387,7 +417,7 @@ class QueryRouter:
                 if rare and not self.idx.headline_has_all(q, material, rare):
                     material = None
 
-        # ---------- 6. Вопроса нет на сайте → свободный ответ ----------
+        # ---------- 7. Вопроса нет на сайте → свободный ответ ----------
         # Материала нет: отвечаем по общим знаниям ассистента, без ссылки.
         if material is None:
             if not is_domain_question(q):
@@ -405,7 +435,7 @@ class QueryRouter:
                 link_url="",
             )
 
-        # ---------- 7. Ответ по материалу ----------
+        # ---------- 8. Ответ по материалу ----------
         if material is not None:
             link_doc = self._best_link([material]) or material
             link = self._link_fields(link_doc, meta)
@@ -442,5 +472,5 @@ class QueryRouter:
                 link_url=link["link_url"],
             )
 
-        # ---------- 7. Ничего не нашли ----------
+        # ---------- 9. Ничего не нашли ----------
         return self._no_answer(meta)

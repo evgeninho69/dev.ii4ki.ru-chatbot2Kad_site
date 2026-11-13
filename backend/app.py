@@ -216,12 +216,59 @@ LINK_LINE_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
+# «Подробнее: [название](ссылка)» в середине строки.
+LINK_INLINE_RE = re.compile(
+    r"(?:\*\*)?Подробнее\s*:\s*\[[^\]]*\]\([^)\s]*\)(?:\*\*)?",
+    re.IGNORECASE,
+)
+
+# Markdown-ссылка: [текст](адрес)
+MD_LINK_RE = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
+
 
 def strip_link_lines(text: str) -> str:
     """Убирает строки «Подробнее: …» — финальную ссылку добавляет система."""
     if not text:
         return ""
     return LINK_LINE_RE.sub("", text)
+
+
+def is_link_line(line: str) -> bool:
+    """Строка целиком про финальную ссылку — такую пишет система, не модель."""
+    return bool(re.match(
+        r"^[ \t]*(?:\*\*)?[ \t]*Подробнее\b", line.strip(), re.IGNORECASE))
+
+
+def strip_hallucinated_links(text: str) -> str:
+    """Убирает markdown-ссылки на 2kad.ru, которых нет в базе знаний.
+
+    Модель иногда сочиняет правдоподобный адрес — например
+    «/blog/obzor-izmeneniy-za-3-kvartal-2026» вместо реальной ссылки на
+    материал. Такой ссылке в ответе не место: оставляем текст, убираем адрес.
+    """
+    if not text or "](" not in text:
+        return text
+    try:
+        known = get_index().known_urls()
+    except Exception:
+        return text
+
+    def repl(m):
+        label, url = m.group(1), m.group(2)
+        if "2kad.ru" not in url:
+            return m.group(0)
+        if url.rstrip("/") in known:
+            return m.group(0)
+        return label
+
+    return MD_LINK_RE.sub(repl, text)
+
+
+def clean_chunk(text: str) -> str:
+    """Текст для вывода клиенту: без «Подробнее: …» и без выдуманных ссылок."""
+    if not text:
+        return ""
+    return strip_hallucinated_links(LINK_INLINE_RE.sub("", text))
 
 
 def ensure_link(text: str, decision) -> str:
@@ -233,7 +280,7 @@ def ensure_link(text: str, decision) -> str:
     строки «Подробнее: …» из ответа удаляются, а в конец добавляется ровно
     одна ссылка — та, что выбрал роутер.
     """
-    body = strip_link_lines(text or "").strip()
+    body = strip_hallucinated_links(strip_link_lines(text or "").strip())
     if not decision.link_url:
         # Материала нет — ссылку не добавляем и не оставляем «Подробнее: …»
         # от модели: подставлять случайный материал нельзя.
@@ -414,21 +461,35 @@ async def chat(req: ChatRequest):
             }, ensure_ascii=False).encode() + b"\n"
 
             try:
-                pending = ""
-                TAIL = 320
+                # Отдаём текст построчно: так строка «Подробнее: …», которую
+                # написала модель, всегда видна целиком и может быть вычищена.
+                # Раньше вычищался только хвост потока — и модельная ссылка
+                # в начале ответа доходила до пользователя.
+                cur = ""
                 async for ev in llm.chat_stream(messages):
                     if ev["type"] == "content":
                         delta = ev["delta"]
                         full += ev["delta"]
-                        # Хвост потока придерживаем: в нём находится финальная
-                        # ссылка, которую формирует система, а не модель.
-                        pending += delta
-                        if len(pending) > TAIL * 2:
-                            head, pending = pending[:-TAIL], pending[-TAIL:]
-                            yield json.dumps({
-                                "type": "content",
-                                "delta": head,
-                            }, ensure_ascii=False).encode() + b"\n"
+                        cur += delta
+                        while "\n" in cur:
+                            line, cur = cur.split("\n", 1)
+                            if is_link_line(line):
+                                continue
+                            out = clean_chunk(line + "\n")
+                            if out:
+                                yield json.dumps({
+                                    "type": "content",
+                                    "delta": out,
+                                }, ensure_ascii=False).encode() + b"\n"
+                        if len(cur) > 3000:
+                            # Совсем длинная строка без переноса — отдаём.
+                            out = clean_chunk(cur)
+                            cur = ""
+                            if out:
+                                yield json.dumps({
+                                    "type": "content",
+                                    "delta": out,
+                                }, ensure_ascii=False).encode() + b"\n"
                     elif ev["type"] == "reasoning":
                         yield json.dumps({
                             "type": "reasoning",
@@ -537,14 +598,16 @@ async def chat(req: ChatRequest):
                     elif ev["type"] == "done":
                         break
 
-                # Хвост ответа: убираем «Подробнее: …», которые могла
-                # написать модель, и добавляем ровно одну правильную ссылку.
-                tail = strip_link_lines(pending).strip()
-                if tail:
-                    yield json.dumps({
-                        "type": "content",
-                        "delta": tail,
-                    }, ensure_ascii=False).encode() + b"\n"
+                # Последняя строка ответа (возможно неполная).
+                if cur.strip() and not is_link_line(cur):
+                    out = clean_chunk(cur)
+                    if out:
+                        yield json.dumps({
+                            "type": "content",
+                            "delta": out,
+                        }, ensure_ascii=False).encode() + b"\n"
+
+                # Финальную ссылку формирует система — ровно одна и правильная.
                 link_line = ensure_link("", decision)
                 if link_line:
                     yield json.dumps({

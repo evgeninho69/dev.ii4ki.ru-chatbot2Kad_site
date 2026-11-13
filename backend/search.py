@@ -19,7 +19,7 @@ import json
 import math
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from topics import match_topic
 
@@ -235,6 +235,7 @@ class SiteIndex:
         self._price_rows: Optional[List[Dict]] = None
         self._doc_type: Dict[str, str] = {}
         self._tf: Dict[str, Dict[str, int]] = {}
+        self._known_urls: Optional[Set[str]] = None
 
         all_tokens: List[str] = []
         for p in self.pages:
@@ -554,6 +555,18 @@ class SiteIndex:
                 return False
         return True
 
+    def known_urls(self) -> Set[str]:
+        """Адреса материалов базы знаний.
+
+        По ним проверяются ссылки, написанные моделью: если адреса нет в
+        базе, он выдуман и в ответе ему не место.
+        """
+        if self._known_urls is None:
+            self._known_urls = {
+                (p.get("url") or "").rstrip("/") for p in self.pages if p.get("url")
+            }
+        return self._known_urls
+
     def topic_doc(self, query: str) -> Optional[Dict]:
         """Материал 2КАД по карте тем (topics.py).
 
@@ -566,7 +579,9 @@ class SiteIndex:
         if not topic:
             return None
         doc = self.get(topic["slug"])
-        if doc and doc.get("type") == "page":
+        # Темой может быть и страница услуги, и статья блога: обзор
+        # изменений за квартал — это статья, а не страница сайта.
+        if doc and doc.get("type") in ("page", "post"):
             return doc
         return None
 
