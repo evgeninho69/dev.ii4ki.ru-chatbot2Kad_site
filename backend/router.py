@@ -2,7 +2,7 @@
 """Роутер запросов: определяет режим ответа, собирает контекст из базы
 знаний и готовит system prompt.
 
-Режимы: pricing | service | article | law | tool | no_answer
+Режимы: pricing | service | article | law | tool | general | no_answer
 
 Корпуса базы знаний:
 - страницы 2kad.ru (услуги, разделы)
@@ -20,11 +20,11 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from prompts import (
-    ARTICLE_PROMPT, LAW_PROMPT, NO_ANSWER_PROMPT, PRICE_MARKERS,
-    PRICE_STEMS, PRICE_WEAK_STEMS, PRICE_WORDS, PRICING_PROMPT, SERVICE_PROMPT,
-    TOOL_PROMPT,
+    ARTICLE_PROMPT, GENERAL_PROMPT, LAW_PROMPT, NO_ANSWER_PROMPT,
+    PRICE_MARKERS, PRICE_STEMS, PRICE_WEAK_STEMS, PRICE_WORDS, PRICING_PROMPT,
+    SERVICE_PROMPT, TOOL_PROMPT,
 )
-from search import LAW_HINTS, SiteIndex
+from search import LAW_HINTS, SiteIndex, is_domain_question
 
 
 # Номер нормативного акта в вопросе: П/0393, П/0372/26, 305-ФЗ
@@ -156,6 +156,25 @@ class QueryRouter:
                 return c
         return None
 
+    def _no_answer(self, meta: Dict[str, str]) -> RoutingDecision:
+        """Вопрос не по теме 2КАД — честный отказ, без ссылки на материал."""
+        prompt = NO_ANSWER_PROMPT.format(
+            main_url=meta["main_url"],
+            email=meta["email"],
+            phone=meta["phone"],
+        )
+        return RoutingDecision(
+            mode="no_answer",
+            page=None,
+            system_prompt=prompt,
+            found_title="",
+            found_url="",
+            source_kind="",
+            link_doc=None,
+            link_title="",
+            link_url="",
+        )
+
     def _link_fields(self, doc: Optional[Dict], meta: Dict) -> Dict[str, str]:
         if not doc:
             return {
@@ -172,10 +191,11 @@ class QueryRouter:
         q = (user_query or "").strip()
         meta = self._meta()
 
-        tool, s_tool = self.idx.top(q, "tool", min_score=12.0)
         law, s_law = self.idx.top(q, "law", min_score=4.0)
         post, s_post = self.idx.top(q, "post", min_score=2.5)
         page, s_page = self.idx.top(q, "page", min_score=2.5)
+        # Сервис из «Полезного» — по буквальному ключевому слову, не по очкам.
+        tool, tool_hits = self.idx.find_tool_strict(q)
 
         act = self._extract_act(q)
         law_hint = bool(LAW_HINTS.search(q))
@@ -183,15 +203,17 @@ class QueryRouter:
         # Материал 2КАД по карте тем — он задаёт финальную ссылку.
         topic_doc = self.idx.topic_doc(q)
 
-        # ---------- 1. Инструмент из «Полезного» ----------
-        # Инструмент важнее калькулятора-как-темы: если человек прямо
-        # просит что-то проверить, посчитать или оценить — ведём в сервис.
-        # Чистый ценовой вопрос («сколько стоит») остаётся в режиме цены.
-        wants_action = bool(re.search(
-            r"(посчита|рассчита|калькулятор|провер|оцени|вычисли|какой риск|"
-            r"можно ли проверить|нужно проверить)",
-            q, re.IGNORECASE))
-        if tool and s_tool >= 12.0 and (wants_action or s_tool >= 18.0):
+        # Вопрос не по теме 2КАД (погода, рецепты) — честный отказ. Проверка
+        # идёт до поиска: иначе вопрос про погоду цеплял статью блога про
+        # сервисы Твери и ассистент отвечал «не по тому».
+        if not (is_domain_question(q) or topic_doc or act):
+            return self._no_answer(meta)
+
+        # ---------- 1. Сервис из «Полезного» ----------
+        # Сервис выбирается не по очкам, а по ключевому слову: оно должно
+        # буквально быть в вопросе. Иначе «построил дом, что делать для
+        # узаконивания» уходил в «Узаконивание в зоне затопления».
+        if tool:
             tool_ctx = self._esc(self._truncate(tool.get("content", ""), 900))
             link = self._link_fields(tool, meta)
             prompt = TOOL_PROMPT.format(
@@ -218,8 +240,12 @@ class QueryRouter:
             calc_text = calculator.get("content", "")
             calc_excerpt = self._esc(self._truncate(
                 calculator.get("excerpt", "") or calc_text, 900))
+            # Контекст услуги — из карты тем: вопрос про проектную
+            # документацию должен вести на страницу «Проектирование»,
+            # а не на общую страницу услуг.
+            service_doc = topic_doc or page
             service_ctx = self._esc(self._truncate(
-                page.get("content", ""), 1200)) if page else ""
+                service_doc.get("content", ""), 1200)) if service_doc else ""
             link_doc = self._best_link([topic_doc, page]) or calculator
             link = self._link_fields(link_doc, meta)
             prompt = PRICING_PROMPT.format(
@@ -232,10 +258,10 @@ class QueryRouter:
             )
             return RoutingDecision(
                 mode="pricing",
-                page=page,
+                page=service_doc or page,
                 system_prompt=prompt,
-                found_title=(page or calculator).get("title", ""),
-                found_url=(page or calculator).get("url", ""),
+                found_title=(service_doc or page or calculator).get("title", ""),
+                found_url=(service_doc or page or calculator).get("url", ""),
                 source_kind="page",
                 link_doc=link_doc,
                 link_title=link["link_title"],
@@ -336,72 +362,85 @@ class QueryRouter:
                 law_doc=act_doc,
             )
 
-        # ---------- 5. Статья блога ----------
-        if post and s_post >= s_page:
-            link_doc = self._best_link([post, topic_doc]) or post
-            link = self._link_fields(link_doc, meta)
-            cats = ", ".join(post.get("category_names") or []) or "Блог"
-            prompt = ARTICLE_PROMPT.format(
-                post_title=self._esc(post.get("title", "")),
-                post_url=post.get("url", ""),
-                post_content=self._esc(self._truncate(post.get("content", ""), 1600)),
-                post_category=self._esc(cats),
-                post_date=post.get("date", ""),
-                phone=meta["phone"],
-                **link,
-            )
+        # ---------- 5. Материал 2КАД ----------
+        # Приоритет: карта тем → страница услуги → статья блога.
+        # Карта тем отображает вопрос на нужный материал детерминированно,
+        # поэтому она важнее результатов поиска.
+        material = topic_doc
+        if material is None and not act:
+            # Поиск: рейтинг = очки BM25 + попадание в заголовок материала.
+            # Раньше статья про «старый дом» выигрывала у материала про
+            # приостановку только потому, что слова встречались в тексте.
+            ranked = []
+            if post and (post.get("slug") or "") not in BAD_LINK_SLUGS:
+                ranked.append((s_post + 3.0 * self.idx.headline_coverage(q, post), post))
+            if page and (page.get("slug") or "") not in BAD_LINK_SLUGS:
+                ranked.append((s_page + 3.0 * self.idx.headline_coverage(q, page), page))
+            if ranked:
+                ranked.sort(key=lambda x: -x[0])
+                material = ranked[0][1]
+            # Материал есть, но он не про суть вопроса: редкое слово вопроса
+            # («сгорел») не отражено в заголовке — значит, статья лишь
+            # «зацепила» это слово. Такую статью подставлять нельзя.
+            if material is not None:
+                rare = self.idx.distinguishing_terms(q)
+                if rare and not self.idx.headline_has_all(q, material, rare):
+                    material = None
+
+        # ---------- 6. Вопроса нет на сайте → свободный ответ ----------
+        # Материала нет: отвечаем по общим знаниям ассистента, без ссылки.
+        if material is None:
+            if not is_domain_question(q):
+                return self._no_answer(meta)
+            prompt = GENERAL_PROMPT.format(phone=meta["phone"])
             return RoutingDecision(
-                mode="article",
-                page=post,
+                mode="general",
+                page=None,
                 system_prompt=prompt,
-                found_title=post.get("title", ""),
-                found_url=post.get("url", ""),
-                source_kind="blog",
-                link_doc=link_doc,
-                link_title=link["link_title"],
-                link_url=link["link_url"],
+                found_title="",
+                found_url="",
+                source_kind="",
+                link_doc=None,
+                link_title="",
+                link_url="",
             )
 
-        # ---------- 6. Страница услуги ----------
-        if page:
-            link_doc = self._best_link([topic_doc, page]) or page
+        # ---------- 7. Ответ по материалу ----------
+        if material is not None:
+            link_doc = self._best_link([material]) or material
             link = self._link_fields(link_doc, meta)
-            prompt = SERVICE_PROMPT.format(
-                page_title=self._esc(page.get("title", "")),
-                page_url=page.get("url", ""),
-                page_content=self._esc(self._truncate(page.get("content", ""), 1600)),
-                phone=meta["phone"],
-                **link,
-            )
+            if material.get("type") == "post":
+                cats = ", ".join(material.get("category_names") or []) or "Блог"
+                prompt = ARTICLE_PROMPT.format(
+                    post_title=self._esc(material.get("title", "")),
+                    post_url=material.get("url", ""),
+                    post_content=self._esc(self._truncate(material.get("content", ""), 1600)),
+                    post_category=self._esc(cats),
+                    post_date=material.get("date", ""),
+                    phone=meta["phone"],
+                    **link,
+                )
+                mode, source_kind = "article", "blog"
+            else:
+                prompt = SERVICE_PROMPT.format(
+                    page_title=self._esc(material.get("title", "")),
+                    page_url=material.get("url", ""),
+                    page_content=self._esc(self._truncate(material.get("content", ""), 1600)),
+                    phone=meta["phone"],
+                    **link,
+                )
+                mode, source_kind = "service", "page"
             return RoutingDecision(
-                mode="service",
-                page=page,
+                mode=mode,
+                page=material,
                 system_prompt=prompt,
-                found_title=page.get("title", ""),
-                found_url=page.get("url", ""),
-                source_kind="page",
+                found_title=material.get("title", ""),
+                found_url=material.get("url", ""),
+                source_kind=source_kind,
                 link_doc=link_doc,
                 link_title=link["link_title"],
                 link_url=link["link_url"],
             )
 
         # ---------- 7. Ничего не нашли ----------
-        services = self.idx.get("kadastrovye-raboty-dlya-chastnyh-klientov")
-        link_doc = self._best_link([post, page]) or services
-        link = self._link_fields(link_doc, meta)
-        prompt = NO_ANSWER_PROMPT.format(
-            main_url=meta["main_url"],
-            email=meta["email"],
-            phone=meta["phone"],
-        )
-        return RoutingDecision(
-            mode="no_answer",
-            page=None,
-            system_prompt=prompt,
-            found_title="",
-            found_url="",
-            source_kind="",
-            link_doc=link_doc,
-            link_title=link["link_title"],
-            link_url=link["link_url"],
-        )
+        return self._no_answer(meta)

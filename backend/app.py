@@ -129,6 +129,14 @@ def grounded_answer(question: str, decision, phone: str) -> str:
     link_url = decision.link_url or main_url
     tail = f"\n\nПодробнее: [{link_title}]({link_url})"
 
+    # ---------- свободный ответ ----------
+    if decision.mode == "general":
+        return (
+            "Уточните, пожалуйста, детали — какой объект и что именно с ним "
+            "произошло. Тогда подскажу порядок действий по вашей ситуации. "
+            f"По кадастровым вопросам Твери и области: {phone}."
+        )
+
     # ---------- инструмент ----------
     if decision.mode == "tool":
         body = doc.get("excerpt") or doc.get("content") or ""
@@ -225,10 +233,12 @@ def ensure_link(text: str, decision) -> str:
     строки «Подробнее: …» из ответа удаляются, а в конец добавляется ровно
     одна ссылка — та, что выбрал роутер.
     """
-    if not decision.link_url:
-        return text
-    title = decision.link_title or "материал 2КАД"
     body = strip_link_lines(text or "").strip()
+    if not decision.link_url:
+        # Материала нет — ссылку не добавляем и не оставляем «Подробнее: …»
+        # от модели: подставлять случайный материал нельзя.
+        return body
+    title = decision.link_title or "материал 2КАД"
     link = f"Подробнее: [{title}]({decision.link_url})"
     if not body:
         return link
@@ -478,22 +488,31 @@ async def chat(req: ChatRequest):
                                 "partial_before": had_partial,
                             })
                             return
-                        # Страница не найдена — вместо технической ошибки
-                        # даём понятный ответ с контактами и ссылкой на сайт.
+                        # Материала нет — вместо технической ошибки даём
+                        # понятный ответ с контактами. Ссылку на материал не
+                        # добавляем: подбирать «хоть что-нибудь» нельзя.
                         phone = get_index().data.get("phone", "+7 (4822) 41-57-68")
                         main_url = get_index().data.get(
                             "main_url", "https://2kad.ru/"
                         )
-                        link_title = decision.link_title or "Кадастровые работы 2КАД"
-                        link_url = decision.link_url or main_url
-                        fallback_text = (
-                            "Уточните, пожалуйста, детали — так я подберу нужный "
-                            "материал. По кадастровым работам, проектированию и "
-                            "инженерным изысканиям в Твери и области — "
-                            f"{link_title}: {link_url}. "
-                            f"Менеджер: {phone}.\n\n"
-                            f"Подробнее: [{link_title}]({link_url})"
-                        )
+                        if decision.mode == "general":
+                            fallback_text = (
+                                "Уточните, пожалуйста, детали — какой объект и "
+                                "что именно с ним произошло. Тогда подскажу "
+                                "порядок действий по вашей ситуации. "
+                                f"Менеджер: {phone}."
+                            )
+                        else:
+                            link_title = decision.link_title or "Кадастровые работы 2КАД"
+                            link_url = decision.link_url or main_url
+                            fallback_text = (
+                                "Уточните, пожалуйста, детали — так я подберу нужный "
+                                "материал. По кадастровым работам, проектированию и "
+                                "инженерным изысканиям в Твери и области — "
+                                f"{link_title}: {link_url}. "
+                                f"Менеджер: {phone}.\n\n"
+                                f"Подробнее: [{link_title}]({link_url})"
+                            )
                         yield json.dumps({
                             "type": "content",
                             "delta": fallback_text,

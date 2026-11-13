@@ -67,7 +67,48 @@ STOP = set("""
 к ж из-за при про без над под между также ещё более менее очень
 этот эту этом этот то том тот этот эта этим той тех этих такие такой
 нужно надо может ли ли же бы вот там тут как
+если после перед между под над при без
+делать сделать сделал делал нужно нужна нужны нужное
+мочь могут мог есть чем
+мой моя мои свой свои своих тоже здесь
 """.split())
+
+# Ключевые слова сервисов из «Полезного», которые слишком общие: по ним нельзя
+# понять, что человек просит именно этот сервис. «Узаконивание» — показательный
+# пример: вопрос «построил дом, что делать для узаконивания» уводил в сервис
+# «Узаконивание построенного в зоне затопления».
+GENERIC_TOOL_KEYWORDS = {
+    "узаконивание", "легализовать постройку", "что делать", "разбор",
+    "инструкция", "пошагово", "памятка", "подсказки", "сколько стоит",
+    "стоимость работ", "цена работ", "предварительная стоимость",
+    "проверить участок", "проверить недвижимость", "что известно",
+    "кадастровая стоимость", "стоимость участка",
+}
+
+# Некоторые сервисы нужно не просто назвать, а именно запросить: сервис
+# проверки участка на затопление уместен, когда человек просит ПРОВЕРИТЬ
+# участок. Вопрос «как узаконить дом в зоне затопления» — это про узаконивание,
+# и он должен вести на посадочную страницу, а не на сервис проверки.
+TOOL_REQUIRED_HINTS = {
+    "proverka-zatopleniya": ("провер", "зоуит"),
+}
+
+# Признаки вопроса по тематике 2КАД. Если ни одного — вопрос не про кадастр
+# и недвижимость, и ассистент честно отвечает, что помогает по своей теме.
+DOMAIN_STEMS = (
+    "кадастр", "недвижим", "участ", "дом", "здани", "объект", "помещен",
+    "квартир", "комнат", "дорог", "сет", "гараж", "дач", "баня", "постро",
+    "строительств", "строй", "реконструкц", "перепланиров", "оформ",
+    "узакон", "легализ", "прав", "собственност", "регистрац", "егрн",
+    "межев", "техплан", "техническ", "план", "приостанов", "вынос",
+    "границ", "координат", "точн", "эксплуатац", "ввод", "разрешени",
+    "гпзу", "пзз", "зонирован", "территор", "оцен", "стоимост", "гко",
+    "упкс", "затопл", "подтопл", "зоуит", "наводн", "приказ", "закон",
+    "норматив", "росреестр", "акт", "суд", "документ", "справк", "выпис",
+    "калькулятор", "аудит", "проверк", "услуг", "цена", "стоим", "смет",
+    "срок", "налог", "ипотек", "материнск", "наследств", "дарени",
+    "купл", "аренд", "выкуп", "обременен",
+)
 
 # Маркеры вопроса, который явно «про закон/нормативку»
 BLOG_HINTS = re.compile(
@@ -125,6 +166,52 @@ def _same_root(a: str, b: str) -> bool:
     return a[:n] == b[:n]
 
 
+def _root_match(a: str, b: str) -> bool:
+    """Совпадение двух слов по корню.
+
+    «построил» ~ «построек», «документ» ~ «документац», «межев» ~ «межева».
+    Грубый стеммер обрезает окончания, поэтому одни и те же слова в разных
+    падежах выглядят по-разному — а для ответа нужно понимать, что речь
+    о том же предмете.
+    """
+    if not a or not b:
+        return False
+    if a.startswith(b) or b.startswith(a):
+        return True
+    if len(a) >= 5 and len(b) >= 5 and a[:5] == b[:5]:
+        return True
+    return False
+
+
+def _phrase_in_stems(key_stems, q_stems) -> bool:
+    """Есть ли в вопросе слова ключевого выражения (по корню, по порядку)."""
+    if not key_stems or not q_stems:
+        return False
+    i = 0
+    for ks in key_stems:
+        found = False
+        while i < len(q_stems):
+            qs = q_stems[i]
+            i += 1
+            if _root_match(qs, ks):
+                found = True
+                break
+        if not found:
+            return False
+    return True
+
+
+def is_domain_question(query: str) -> bool:
+    """Похож ли вопрос на тематику 2КАД (кадастр, недвижимость, документы)."""
+    for t in normalize_query(query):
+        for k in DOMAIN_STEMS:
+            if t.startswith(k):
+                return True
+            if len(t) >= 5 and k.startswith(t):
+                return True
+    return False
+
+
 def normalize_act(text: str) -> str:
     """«П / 0393 / 26» → «П/0393/26», «305 - ФЗ» → «305-ФЗ»."""
     s = re.sub(r"\s+", "", text or "")
@@ -172,8 +259,13 @@ class SiteIndex:
             self._tf[pid] = tf
             all_tokens.extend(content_tokens)
 
+        # Частота слова в корпусе: учитываем и текст, и заголовок, и
+        # предмет документа — иначе слово из заголовка считается «неизвестным».
         for pid, toks in self._tokens.items():
-            for t in set(toks):
+            all_t = (set(toks)
+                     | set(self._title_tokens.get(pid, []))
+                     | set(self._excerpt_tokens.get(pid, [])))
+            for t in all_t:
                 self._doc_freq[t] = self._doc_freq.get(t, 0) + 1
 
         self._avg_dl = (
@@ -348,6 +440,119 @@ class SiteIndex:
         """Инструмент из «Полезного», если вопрос про него."""
         doc, _ = self.top(query, "tool", min_score=2.0)
         return doc
+
+    def find_tool_strict(self, query: str) -> Tuple[Optional[Dict], List[str]]:
+        """Сервис из «Полезного» — только по буквальному ключевому слову.
+
+        По очкам BM25 сервис выбирался неверно: документ «Узаконивание
+        построенного в зоне затопления» большой и насыщен словом
+        «узаконивание», поэтому он выигрывал на вопросе «построил дом, что
+        делать для узаконивания». Теперь сервис определяется только тем,
+        действительно ли его ключевое слово написано в вопросе.
+        """
+        q_stems = normalize_query(query)
+        best = None
+        best_hits: List[str] = []
+        best_score = 0
+        for p in self.pages:
+            if p.get("type") != "tool":
+                continue
+            hits: List[str] = []
+            for kw in p.get("keywords") or []:
+                k = (kw or "").strip().lower()
+                if not k or k in GENERIC_TOOL_KEYWORDS:
+                    continue
+                key_stems = [stem_ru(w) for w in WORD_RE.findall(k)]
+                if not key_stems:
+                    continue
+                if _phrase_in_stems(key_stems, q_stems):
+                    hits.append(k)
+            if not hits:
+                continue
+            need = TOOL_REQUIRED_HINTS.get(p.get("slug") or "")
+            if need:
+                if not any(any(_root_match(qs, k) for qs in q_stems)
+                           for k in need):
+                    continue
+            hits.sort(key=len, reverse=True)
+            score = len(hits[0]) + sum(len(h) for h in hits[1:])
+            if score > best_score:
+                best, best_hits, best_score = p, hits, score
+        return best, best_hits
+
+    def unmatched_terms(self, query: str) -> List[str]:
+        """Слова вопроса, которых нет в базе знаний.
+
+        Это сигнал «вопроса нет на сайте»: например «сгорел» не встречается
+        ни в одном материале 2КАД — значит отвечать нужно по общим знаниям,
+        а не подставлять случайную статью.
+        """
+        out: List[str] = []
+        for t in normalize_query(query):
+            if len(t) >= 4 and self._doc_freq.get(t, 0) == 0 and t not in out:
+                out.append(t)
+        return out
+
+    def coverage(self, query: str, doc: Dict) -> float:
+        """Доля значимых слов вопроса, найденных в документе.
+
+        Сравнение идёт по корню слова: «построил» и «построек» — одно и то же.
+        """
+        if not doc:
+            return 0.0
+        q = normalize_query(query)
+        if not q:
+            return 0.0
+        pid = str(doc.get("id"))
+        have = (set(self._tokens.get(pid, []))
+                | set(self._title_tokens.get(pid, []))
+                | set(self._excerpt_tokens.get(pid, [])))
+        hits = 0
+        for t in q:
+            if any(_root_match(d, t) for d in have):
+                hits += 1
+        return hits / float(len(q))
+
+    def distinguishing_terms(self, query: str) -> List[str]:
+        """Редкие слова вопроса — именно они отличают тему от соседней.
+
+        Если слово встречается в базе один-два раза, материал про него
+        должен быть заголовком, а не случайной строчкой внутри статьи.
+        """
+        out: List[str] = []
+        for t in normalize_query(query):
+            df = self._doc_freq.get(t, 0)
+            if len(t) >= 4 and 0 < df <= 3 and t not in out:
+                out.append(t)
+        return out
+
+    def headline_coverage(self, query: str, doc: Dict) -> float:
+        """Доля слов вопроса, попавших в заголовок и предмет документа."""
+        if not doc:
+            return 0.0
+        q = normalize_query(query)
+        if not q:
+            return 0.0
+        pid = str(doc.get("id"))
+        head = (set(self._title_tokens.get(pid, []))
+                | set(self._excerpt_tokens.get(pid, [])))
+        hits = 0
+        for t in q:
+            if any(_root_match(d, t) for d in head):
+                hits += 1
+        return hits / float(len(q))
+
+    def headline_has_all(self, query: str, doc: Dict, terms: List[str]) -> bool:
+        """Есть ли все редкие слова вопроса в заголовке/предмете документа."""
+        if not doc or not terms:
+            return True
+        pid = str(doc.get("id"))
+        head = (set(self._title_tokens.get(pid, []))
+                | set(self._excerpt_tokens.get(pid, [])))
+        for t in terms:
+            if not any(_root_match(d, t) for d in head):
+                return False
+        return True
 
     def topic_doc(self, query: str) -> Optional[Dict]:
         """Материал 2КАД по карте тем (topics.py).

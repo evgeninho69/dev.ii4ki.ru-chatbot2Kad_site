@@ -22,7 +22,7 @@
 
   *,*::before,*::after{box-sizing:border-box}
 
-  html,body{height:100%}
+  html,body{height:100%;overflow:hidden}
   body{
     margin:0;
     background:var(--bg);
@@ -35,16 +35,21 @@
   }
 
   /* ---------- каркас ---------- */
+  /* Страница статична: прокрутки страницы нет никогда. Прокручивается
+     только лента переписки — когда сообщений становится много. */
   .stage{
-    min-height:100dvh;
+    height:100vh;
+    height:100dvh;
+    max-height:100dvh;
+    overflow:hidden;
     display:flex;
     flex-direction:column;
     align-items:center;
     justify-content:center;
-    gap:clamp(28px,5vh,52px);
-    padding:clamp(28px,6vh,64px) 20px;
+    gap:clamp(20px,4vh,40px);
+    padding:clamp(20px,4vh,44px) 20px;
   }
-  .stage.is-chat{justify-content:flex-start;gap:20px}
+  .stage.is-chat{justify-content:flex-start;gap:16px;padding-top:clamp(14px,3vh,28px)}
 
   .col{
     width:100%;
@@ -53,7 +58,7 @@
   }
 
   /* ---------- шапка ---------- */
-  .head{text-align:center}
+  .head{text-align:center;flex:0 0 auto}
   .head h1{
     margin:0;
     font-size:clamp(24px,4.4vw,34px);
@@ -69,12 +74,16 @@
   }
 
   /* ---------- лента диалога ---------- */
+  /* Единственный прокручиваемый блок на странице. min-height:0 обязателен —
+     иначе flex-элемент не сжимается, лента растёт и страница едет вниз. */
   .log{
     display:none;
     width:100%;
     max-width:var(--max);
     flex:1 1 auto;
+    min-height:0;
     overflow-y:auto;
+    overscroll-behavior:contain;
     padding:4px 0 8px;
     scrollbar-width:thin;
   }
@@ -128,6 +137,7 @@
   .composer{
     width:100%;
     max-width:var(--max);
+    flex:0 0 auto;
     position:relative;
   }
   .composer form{
@@ -171,8 +181,10 @@
   .hints{
     width:100%;
     max-width:var(--max);
+    min-height:0;
+    overflow-y:auto;
+    overscroll-behavior:contain;
     transition:opacity .3s ease,max-height .35s ease;
-    overflow:hidden;
   }
   .stage.is-chat .hints{display:none}
 
@@ -236,6 +248,7 @@
   .foot{
     width:100%;
     max-width:var(--max);
+    flex:0 0 auto;
     text-align:center;
     color:#B6B2AC;
     font-size:12.5px;
@@ -487,8 +500,6 @@ chips.addEventListener('click', function(e){
   if (!chip) return;
   ask(chip.textContent);
 });
-
-input.focus();
 </script>
 </body>
 </html>
