@@ -156,6 +156,20 @@ class QueryRouter:
                 return c
         return None
 
+    def _article_context(self, post: Dict) -> str:
+        """Контекст статьи блога.
+
+        Сначала предмет статьи (excerpt) — там перечислены все изменения
+        обзорного материала, а потом текст: на обзорный вопрос («что
+        изменилось в приказах Росреестра») 1600 символов не хватало, и
+        ассистент перечислял только первое изменение.
+        """
+        excerpt = (post.get("excerpt") or "").strip()
+        body = self._truncate(post.get("content", ""), 2800)
+        if excerpt and excerpt[:60] not in body:
+            return f"{excerpt}\n\n{body}"
+        return body
+
     def _no_answer(self, meta: Dict[str, str]) -> RoutingDecision:
         """Вопрос не по теме 2КАД — честный отказ, без ссылки на материал."""
         prompt = NO_ANSWER_PROMPT.format(
@@ -329,7 +343,7 @@ class QueryRouter:
             prompt = ARTICLE_PROMPT.format(
                 post_title=self._esc(topic_doc.get("title", "")),
                 post_url=topic_doc.get("url", ""),
-                post_content=self._esc(self._truncate(topic_doc.get("content", ""), 1600)),
+                post_content=self._esc(self._article_context(topic_doc)),
                 post_category=self._esc(cats),
                 post_date=topic_doc.get("date", ""),
                 phone=meta["phone"],
@@ -444,7 +458,7 @@ class QueryRouter:
                 prompt = ARTICLE_PROMPT.format(
                     post_title=self._esc(material.get("title", "")),
                     post_url=material.get("url", ""),
-                    post_content=self._esc(self._truncate(material.get("content", ""), 1600)),
+                    post_content=self._esc(self._article_context(material)),
                     post_category=self._esc(cats),
                     post_date=material.get("date", ""),
                     phone=meta["phone"],
