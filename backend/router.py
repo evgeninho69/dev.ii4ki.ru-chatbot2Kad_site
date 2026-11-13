@@ -115,7 +115,7 @@ class QueryRouter:
 
         # --- Режим BLOG ---
         if use_blog and post:
-            content_excerpt = self._esc(self._truncate(post.get("content", ""), 2600))
+            content_excerpt = self._esc(self._truncate(post.get("content", ""), 1400))
             cats = ", ".join(post.get("category_names", [])) or "Блог"
             sys_prompt = BLOG_PROMPT.format(
                 post_title=self._esc(post["title"]),
@@ -136,7 +136,7 @@ class QueryRouter:
 
         # --- Режим INFO — страница услуги ---
         if page:
-            content_excerpt = self._esc(self._truncate(page.get("content", ""), 2400))
+            content_excerpt = self._esc(self._truncate(page.get("content", ""), 1600))
             sys_prompt = INFO_PROMPT.format(
                 page_title=self._esc(page["title"]),
                 page_url=page["url"],
@@ -154,7 +154,7 @@ class QueryRouter:
 
         # --- Режим BLOG (fallback — страницу не нашли, но пост нашли) ---
         if post:
-            content_excerpt = self._esc(self._truncate(post.get("content", ""), 2600))
+            content_excerpt = self._esc(self._truncate(post.get("content", ""), 1400))
             cats = ", ".join(post.get("category_names", [])) or "Блог"
             sys_prompt = BLOG_PROMPT.format(
                 post_title=self._esc(post["title"]),

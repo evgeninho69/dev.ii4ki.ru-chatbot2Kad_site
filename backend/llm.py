@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import time
 from typing import AsyncGenerator, Dict, List, Optional
 
 import httpx
@@ -47,6 +48,12 @@ import httpx
 
 # Сколько секунд ждать следующий chunk. Каждый полученный chunk сбрасывает таймер.
 STALL_TIMEOUT_S = 15.0
+
+# Общий бюджет времени на всю цепочку провайдеров (включая fallback).
+# Нужен, чтобы ответ гарантированно ушёл клиенту: прокси перед доменом
+# обрывает соединение примерно на 60-й секунде, и без жёсткого дедлайна
+# пользователь видел бы пустой чат.
+TOTAL_BUDGET_S = 40.0
 
 # Описание провайдеров. Поля:
 #   key_env / base_env / model_env — имена переменных окружения
@@ -197,12 +204,14 @@ class AnyModelClient:
         temperature: float = 0.3,
         fallback: bool = True,
     ) -> AsyncGenerator[Dict, None]:
-        """Стримит ответ от LLM с stall-detection и переключением провайдера."""
+        """Стрим ответ от LLM с stall-detection и переключением провайдера."""
+        deadline = time.monotonic() + TOTAL_BUDGET_S
         async for ev in self._stream_once(
             messages, model=model,
             max_tokens=max_tokens, temperature=temperature,
             fallback_allowed=fallback, used_fallback=False,
             tried_fallback=[],
+            deadline=deadline,
         ):
             yield ev
 
@@ -215,8 +224,20 @@ class AnyModelClient:
         fallback_allowed: bool,
         used_fallback: bool,
         tried_fallback: list,
+        deadline: Optional[float] = None,
     ) -> AsyncGenerator[Dict, None]:
         target = self.target
+        # Сколько секунд ещё осталось на весь вызов (включая fallback).
+        remaining = (deadline - time.monotonic()) if deadline else TOTAL_BUDGET_S
+        if remaining <= 1.0:
+            yield {
+                "type": "error",
+                "message": (
+                    f"budget исчерпан: {target['name']}/{target['model']} "
+                    f"не успел ответить за {TOTAL_BUDGET_S:.0f} сек"
+                ),
+            }
+            return
         used_model = model or target["model"]
         url = f"{target['base_url']}/chat/completions"
         payload = {
@@ -244,8 +265,14 @@ class AnyModelClient:
         _state = {"in_cot": None, "buf": ""}
 
         # HTTP-таймауты. Read — большой (провайдер в принципе может отвечать долго),
-        # но stall detection сработает раньше.
-        timeout_cfg = httpx.Timeout(connect=10.0, read=120.0, write=10.0, pool=10.0)
+        # но stall detection сработает раньше. Все таймауты ограничены общим
+        # бюджетом времени, чтобы ответ гарантированно ушёл клиенту.
+        timeout_cfg = httpx.Timeout(
+            connect=min(10.0, max(2.0, remaining)),
+            read=min(120.0, max(3.0, remaining)),
+            write=min(10.0, max(2.0, remaining)),
+            pool=min(10.0, max(2.0, remaining)),
+        )
 
         async def _do_fallback(reason: str) -> AsyncGenerator[Dict, None]:
             """Переключение на следующую цель цепочки. Если её нет — error."""
@@ -276,6 +303,7 @@ class AnyModelClient:
                 max_tokens=max_tokens, temperature=temperature,
                 fallback_allowed=True, used_fallback=True,
                 tried_fallback=tried_fallback,
+                deadline=deadline,
             ):
                 yield ev
 
@@ -316,7 +344,11 @@ class AnyModelClient:
                                 try:
                                     raw_line = await asyncio.wait_for(
                                         line_iter.__anext__(),
-                                        timeout=STALL_TIMEOUT_S,
+                                        timeout=min(
+                                            STALL_TIMEOUT_S,
+                                            max(2.0, (deadline - time.monotonic())
+                                                if deadline else STALL_TIMEOUT_S),
+                                        ),
                                     )
                                 except StopAsyncIteration:
                                     # Провайдер закрыл стрим без [DONE]
@@ -481,6 +513,7 @@ class AnyModelClient:
             max_tokens=max_tokens, temperature=temperature,
             fallback_allowed=True, used_fallback=False,
             tried_fallback=[],
+            deadline=time.monotonic() + TOTAL_BUDGET_S,
         ):
             if ev["type"] == "content":
                 content += ev["delta"]
