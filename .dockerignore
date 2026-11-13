@@ -31,8 +31,9 @@ dist/
 build/
 *.egg-info/
 
-# Data — индекс пересобирается на лету через site_index.json
+# Data — индекс собирается заранее, кэш перекачивания в образ не нужен
 backend/data/*.tmp
+backend/data/kirf_cache.json
 
 # Tests
 tests/

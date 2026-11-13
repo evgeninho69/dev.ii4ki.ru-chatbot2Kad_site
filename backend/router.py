@@ -1,22 +1,42 @@
 # -*- coding: utf-8 -*-
-"""Роутер запросов: определяет ветку (pricing / info / blog / no_answer),
-собирает контекст из базы знаний, формирует system prompt.
+"""Роутер запросов: определяет режим ответа, собирает контекст из базы
+знаний и готовит system prompt.
 
-Источники контекста:
-- страницы услуг 2kad.ru (site_index.json, type=page)
-- блог 2kad.ru (site_index.json, type=post) — 83 статьи
+Режимы: pricing | service | article | law | tool | no_answer
+
+Корпуса базы знаний:
+- страницы 2kad.ru (услуги, разделы)
+- блог 2kad.ru
+- нормативные документы (ki-rf.ru/zakon/)
+- сервисы и инструменты из раздела «Полезное»
+
+Главное правило: у каждого ответа есть link_doc — материал 2КАД (услуга
+или статья), на который ответ заканчивается ссылкой.
 """
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from prompts import (
-    BLOG_PROMPT, INFO_PROMPT, NO_ANSWER_PROMPT, PRICE_STEMS, PRICE_WORDS,
-    PRICING_PROMPT,
+    ARTICLE_PROMPT, LAW_PROMPT, NO_ANSWER_PROMPT, PRICE_STEMS, PRICE_WORDS,
+    PRICING_PROMPT, SERVICE_PROMPT, TOOL_PROMPT,
 )
-from search import SiteIndex
+from search import LAW_HINTS, SiteIndex
+
+
+# Номер нормативного акта в вопросе: П/0393, П/0372/26, 305-ФЗ
+ACT_RE = re.compile(
+    r"(?:№\s*)?([ПP]\s*/\s*\d{3,4}(?:\s*/\s*\d{2,4})?|\d{1,3}\s*[-–—]\s*ФЗ)",
+    re.IGNORECASE,
+)
+
+# Страницы, которые не годятся в качестве финальной ссылки
+BAD_LINK_SLUGS = {
+    "blog", "glavnaya", "kontakty", "politika-konfidencialnosti",
+    "poleznoe", "otzyvy", "kejsy",
+}
 
 
 def _price_pattern() -> str:
@@ -42,12 +62,16 @@ PRICE_RE = re.compile(_price_pattern(), re.IGNORECASE)
 
 @dataclass
 class RoutingDecision:
-    mode: str                          # "pricing" | "info" | "blog" | "no_answer"
-    page: Optional[Dict]               # Найденный документ (страница или пост)
-    system_prompt: str                 # Готовый system prompt
+    mode: str                          # pricing|service|article|law|tool|no_answer
+    page: Optional[Dict] = None        # Основной найденный документ
+    system_prompt: str = ""            # Готовый system prompt
     found_title: str = ""              # Заголовок для логов
     found_url: str = ""                # URL для логов
-    source_kind: str = ""              # "page" | "blog" | ""
+    source_kind: str = ""              # page|blog|law|tool
+    link_doc: Optional[Dict] = field(default=None)   # Материал 2КАД для финальной ссылки
+    link_title: str = ""
+    link_url: str = ""
+    law_doc: Optional[Dict] = field(default=None)    # Нормативный акт (если есть)
 
 
 class QueryRouter:
@@ -60,7 +84,7 @@ class QueryRouter:
         return {
             "phone": self.meta.get("phone", "+7 (4822) 41-57-68"),
             "calculator_url": self.meta.get("calculator_url", "https://2kad.ru/kalkulyator/"),
-            "main_url": self.meta.get("pages", [{}])[0].get("url", "https://2kad.ru/"),
+            "main_url": self.meta.get("main_url", "https://2kad.ru/"),
             "email": self.meta.get("email", "info@2kad.ru"),
         }
 
@@ -68,10 +92,10 @@ class QueryRouter:
         return bool(PRICE_RE.search(q))
 
     def _truncate(self, text: str, max_chars: int = 1800) -> str:
-        if len(text) <= max_chars:
-            return text
+        if not text:
+            return ""
         cut = text[:max_chars]
-        for sep in [". ", "; "]:
+        for sep in (". ", ".\n", "; ", " — ", ", "):
             i = cut.rfind(sep)
             if i > max_chars * 0.7:
                 return cut[:i + 1]
@@ -83,130 +107,256 @@ class QueryRouter:
             return ""
         return text.replace("{", "{{").replace("}", "}}")
 
+    def _extract_act(self, q: str) -> str:
+        m = ACT_RE.search(q or "")
+        if not m:
+            return ""
+        return re.sub(r"\s+", "", m.group(1)).upper().replace("P/", "П/")
+
+    def _linkable(self, doc: Optional[Dict]) -> bool:
+        """Подходит ли документ в качестве финальной ссылки на материал 2КАД."""
+        if not doc:
+            return False
+        if doc.get("type") not in ("page", "post"):
+            return False
+        if (doc.get("slug") or "") in BAD_LINK_SLUGS:
+            return False
+        return len(doc.get("content") or "") > 400
+
+    def _best_link(self, candidates: List[Dict]) -> Optional[Dict]:
+        for c in candidates:
+            if self._linkable(c):
+                return c
+        return None
+
+    def _link_fields(self, doc: Optional[Dict], meta: Dict) -> Dict[str, str]:
+        if not doc:
+            return {
+                "link_title": "2КАД",
+                "link_url": meta["main_url"],
+            }
+        return {
+            "link_title": doc.get("title", "Материал 2КАД"),
+            "link_url": doc.get("url", meta["main_url"]),
+        }
+
     # ---------- main ----------
     def route(self, user_query: str) -> RoutingDecision:
+        q = (user_query or "").strip()
         meta = self._meta()
-        is_price = self.is_pricing_question(user_query)
-        service_page = self.idx.find_service_page(user_query)
-        blog_post = self.idx.find_blog_post(user_query)
 
-        # --- Режим PRICING ---
+        tool, s_tool = self.idx.top(q, "tool", min_score=12.0)
+        law, s_law = self.idx.top(q, "law", min_score=4.0)
+        post, s_post = self.idx.top(q, "post", min_score=2.5)
+        page, s_page = self.idx.top(q, "page", min_score=2.5)
+
+        act = self._extract_act(q)
+        law_hint = bool(LAW_HINTS.search(q))
+        is_price = self.is_pricing_question(q)
+
+        # ---------- 1. Инструмент из «Полезного» ----------
+        # Инструмент важнее калькулятора-как-темы: если человек прямо
+        # просит что-то проверить, посчитать или оценить — ведём в сервис.
+        # Чистый ценовой вопрос («сколько стоит») остаётся в режиме цены.
+        wants_action = bool(re.search(
+            r"(посчита|рассчита|калькулятор|провер|оцени|вычисли|какой риск|"
+            r"можно ли проверить|нужно проверить)",
+            q, re.IGNORECASE))
+        if tool and s_tool >= 12.0 and (wants_action or not is_price):
+            tool_ctx = self._esc(self._truncate(tool.get("content", ""), 900))
+            link = self._link_fields(tool, meta)
+            prompt = TOOL_PROMPT.format(
+                tool_title=self._esc(tool.get("title", "")),
+                tool_text=tool_ctx,
+                phone=meta["phone"],
+                **link,
+            )
+            return RoutingDecision(
+                mode="tool",
+                page=tool,
+                system_prompt=prompt,
+                found_title=tool.get("title", ""),
+                found_url=tool.get("url", ""),
+                source_kind="tool",
+                link_doc=tool,
+                link_title=link["link_title"],
+                link_url=link["link_url"],
+            )
+
+        # ---------- 2. Цена ----------
         if is_price:
             calculator = self.idx.get("kalkulyator") or {}
             calc_text = calculator.get("content", "")
-            calc_excerpt = self._esc(self._truncate(calculator.get("excerpt", "") or calc_text, 1200))
-            service_ctx = self._esc(self._truncate(service_page.get("content", ""), 1200)) if service_page else ""
-
-            sys_prompt = PRICING_PROMPT.format(
+            calc_excerpt = self._esc(self._truncate(
+                calculator.get("excerpt", "") or calc_text, 900))
+            service_ctx = self._esc(self._truncate(
+                page.get("content", ""), 1200)) if page else ""
+            link_doc = self._best_link([page]) or calculator
+            link = self._link_fields(link_doc, meta)
+            prompt = PRICING_PROMPT.format(
                 calculator_context=calc_excerpt,
                 service_context=service_ctx,
                 calculator_url=meta["calculator_url"],
                 phone=meta["phone"],
+                **link,
             )
             return RoutingDecision(
                 mode="pricing",
-                page=service_page,
-                system_prompt=sys_prompt,
-                found_title=(service_page or calculator).get("title", ""),
-                found_url=(service_page or calculator).get("url", ""),
-                source_kind="page",
-            )
-
-        # --- Выбор источника: блог или страница услуги ---
-        page, post, _score = self.idx.find_best(user_query)
-
-        # Блог выигрывает, если:
-        #  - в вопросе есть маркеры блога/закона (find_best уже учёл), или
-        #  - статья заметно сильнее совпала, чем страница услуги
-        use_blog = False
-        if post:
-            if page is None:
-                use_blog = True
-            else:
-                p_score = self._score_only(user_query, page)
-                b_score = self._score_only(user_query, post)
-                if b_score >= p_score * 0.9:
-                    use_blog = True
-
-        # --- Режим BLOG ---
-        if use_blog and post:
-            content_excerpt = self._esc(self._truncate(post.get("content", ""), 1400))
-            cats = ", ".join(post.get("category_names", [])) or "Блог"
-            sys_prompt = BLOG_PROMPT.format(
-                post_title=self._esc(post["title"]),
-                post_url=post["url"],
-                post_content=content_excerpt,
-                post_category=self._esc(cats),
-                post_date=self._esc(post.get("date", "")),
-                phone=meta["phone"],
-            )
-            return RoutingDecision(
-                mode="blog",
-                page=post,
-                system_prompt=sys_prompt,
-                found_title=post["title"],
-                found_url=post["url"],
-                source_kind="blog",
-            )
-
-        # --- Режим INFO — страница услуги ---
-        if page:
-            content_excerpt = self._esc(self._truncate(page.get("content", ""), 1600))
-            sys_prompt = INFO_PROMPT.format(
-                page_title=self._esc(page["title"]),
-                page_url=page["url"],
-                page_content=content_excerpt,
-                phone=meta["phone"],
-            )
-            return RoutingDecision(
-                mode="info",
                 page=page,
-                system_prompt=sys_prompt,
-                found_title=page["title"],
-                found_url=page["url"],
+                system_prompt=prompt,
+                found_title=(page or calculator).get("title", ""),
+                found_url=(page or calculator).get("url", ""),
                 source_kind="page",
+                link_doc=link_doc,
+                link_title=link["link_title"],
+                link_url=link["link_url"],
             )
 
-        # --- Режим BLOG (fallback — страницу не нашли, но пост нашли) ---
-        if post:
-            content_excerpt = self._esc(self._truncate(post.get("content", ""), 1400))
-            cats = ", ".join(post.get("category_names", [])) or "Блог"
-            sys_prompt = BLOG_PROMPT.format(
-                post_title=self._esc(post["title"]),
-                post_url=post["url"],
-                post_content=content_excerpt,
-                post_category=self._esc(cats),
-                post_date=self._esc(post.get("date", "")),
+        # ---------- 3. Конкретный акт в вопросе ----------
+        if act:
+            related = self.idx.find_by_act(act)
+            act_doc = self.idx.find_law_by_act(act)
+            if act_doc is None and law:
+                hay = f"{law.get('title', '')}\n{law.get('content', '')}"
+                if act.lower() in hay.lower():
+                    act_doc = law
+            if act_doc or related:
+                link_doc = self._best_link([related, page, post])
+                link = self._link_fields(link_doc, meta)
+                related_ctx = ""
+                if related:
+                    related_ctx = self._esc(self._truncate(
+                        related.get("content", ""), 1600))
+                else:
+                    related_ctx = "Материал 2КАД по этой теме не найден."
+                law_ctx = self._esc(self._truncate(
+                    act_doc.get("content", ""), 1800)) if act_doc else (
+                    "Текст акта в базе не найден — опирайся на материал 2КАД "
+                    "ниже и не называй номер акта, если его нет в тексте."
+                )
+                law_cats = ", ".join(
+                    (act_doc or {}).get("category_names") or []) or "Нормативные акты"
+                prompt = LAW_PROMPT.format(
+                    law_title=self._esc((act_doc or {}).get("title", "")),
+                    law_date=(act_doc or {}).get("date", ""),
+                    law_category=self._esc(law_cats),
+                    law_content=law_ctx,
+                    related_context=related_ctx,
+                    phone=meta["phone"],
+                    **link,
+                )
+                return RoutingDecision(
+                    mode="law",
+                    page=act_doc or related,
+                    system_prompt=prompt,
+                    found_title=(act_doc or {}).get("title", ""),
+                    found_url=(act_doc or {}).get("url", ""),
+                    source_kind="law",
+                    link_doc=link_doc,
+                    link_title=link["link_title"],
+                    link_url=link["link_url"],
+                    law_doc=act_doc,
+                )
+
+        # ---------- 4. Законодательный вопрос по маркерам ----------
+        if law_hint and law and s_law >= max(4.0, 0.6 * s_post):
+            link_doc = self._best_link([post, page])
+            link = self._link_fields(link_doc, meta)
+            related_ctx = ""
+            if link_doc:
+                related_ctx = self._esc(self._truncate(
+                    link_doc.get("content", ""), 1400))
+            else:
+                related_ctx = "Материал 2КАД по этой теме не найден."
+            law_cats = ", ".join(law.get("category_names") or []) or "Нормативные акты"
+            prompt = LAW_PROMPT.format(
+                law_title=self._esc(law.get("title", "")),
+                law_date=law.get("date", ""),
+                law_category=self._esc(law_cats),
+                law_content=self._esc(self._truncate(law.get("content", ""), 1800)),
+                related_context=related_ctx,
                 phone=meta["phone"],
+                **link,
             )
             return RoutingDecision(
-                mode="blog",
-                page=post,
-                system_prompt=sys_prompt,
-                found_title=post["title"],
-                found_url=post["url"],
-                source_kind="blog",
+                mode="law",
+                page=law,
+                system_prompt=prompt,
+                found_title=law.get("title", ""),
+                found_url=law.get("url", ""),
+                source_kind="law",
+                link_doc=link_doc,
+                link_title=link["link_title"],
+                link_url=link["link_url"],
+                law_doc=law,
             )
 
-        # --- Режим NO_ANSWER ---
-        main_url = self.meta["pages"][0]["url"] if self.meta["pages"] else "https://2kad.ru/"
-        sys_prompt = NO_ANSWER_PROMPT.format(
-            main_url=main_url,
+        # ---------- 5. Статья блога ----------
+        if post and s_post >= s_page:
+            link_doc = self._best_link([post]) or post
+            link = self._link_fields(link_doc, meta)
+            cats = ", ".join(post.get("category_names") or []) or "Блог"
+            prompt = ARTICLE_PROMPT.format(
+                post_title=self._esc(post.get("title", "")),
+                post_url=post.get("url", ""),
+                post_content=self._esc(self._truncate(post.get("content", ""), 1600)),
+                post_category=self._esc(cats),
+                post_date=post.get("date", ""),
+                phone=meta["phone"],
+                **link,
+            )
+            return RoutingDecision(
+                mode="article",
+                page=post,
+                system_prompt=prompt,
+                found_title=post.get("title", ""),
+                found_url=post.get("url", ""),
+                source_kind="blog",
+                link_doc=link_doc,
+                link_title=link["link_title"],
+                link_url=link["link_url"],
+            )
+
+        # ---------- 6. Страница услуги ----------
+        if page:
+            link_doc = self._best_link([page]) or page
+            link = self._link_fields(link_doc, meta)
+            prompt = SERVICE_PROMPT.format(
+                page_title=self._esc(page.get("title", "")),
+                page_url=page.get("url", ""),
+                page_content=self._esc(self._truncate(page.get("content", ""), 1600)),
+                phone=meta["phone"],
+                **link,
+            )
+            return RoutingDecision(
+                mode="service",
+                page=page,
+                system_prompt=prompt,
+                found_title=page.get("title", ""),
+                found_url=page.get("url", ""),
+                source_kind="page",
+                link_doc=link_doc,
+                link_title=link["link_title"],
+                link_url=link["link_url"],
+            )
+
+        # ---------- 7. Ничего не нашли ----------
+        services = self.idx.get("kadastrovye-raboty-dlya-chastnyh-klientov")
+        link_doc = self._best_link([post, page]) or services
+        link = self._link_fields(link_doc, meta)
+        prompt = NO_ANSWER_PROMPT.format(
+            main_url=meta["main_url"],
             email=meta["email"],
             phone=meta["phone"],
         )
         return RoutingDecision(
             mode="no_answer",
             page=None,
-            system_prompt=sys_prompt,
-            found_title="(no page)",
+            system_prompt=prompt,
+            found_title="",
             found_url="",
+            source_kind="",
+            link_doc=link_doc,
+            link_title=link["link_title"],
+            link_url=link["link_url"],
         )
-
-    # ---------- служебное ----------
-    def _score_only(self, query: str, doc: Dict) -> float:
-        only = "post" if doc.get("type") == "post" else "page"
-        res = self.idx.search(query, top_k=1, only=only)
-        if res and res[0][0]["id"] == doc["id"]:
-            return res[0][1]
-        return 0.0

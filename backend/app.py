@@ -116,39 +116,92 @@ def grounded_answer(question: str, decision, phone: str) -> str:
     """Гарантированный ответ по найденному материалу — без LLM.
 
     Используется, когда провайдер LLM завис или недоступен: выдержки
-    берутся ДОСЛОВНО из статьи блога или страницы услуги, поэтому ответ
-    остаётся фактическим, проверяемым и появляется мгновенно.
+    берутся ДОСЛОВНО из найденного материала, поэтому ответ остаётся
+    фактическим, проверяемым и появляется мгновенно. Финальная ссылка
+    всегда ведёт на материал 2КАД (услугу или статью).
     """
-    doc = decision.page or {}
     idx = get_index()
-    title = doc.get("title") or "материал"
-    url = doc.get("url", "")
-    passages = idx.best_passages(question, doc, max_sentences=4, max_chars=900)
+    doc = decision.page or {}
+    main_url = idx.data.get("main_url", "https://2kad.ru/")
 
-    tail = f"\n\nПодробнее: [{title}]({url})"
-    rubric = (doc.get("category_names") or [None])[0]
-    date = doc.get("date")
-    if rubric:
-        tail += f" — {rubric}"
-        if date:
-            tail += f", {date}"
+    link_title = decision.link_title or "материал 2КАД"
+    link_url = decision.link_url or main_url
+    tail = f"\n\nПодробнее: [{link_title}]({link_url})"
+
+    # ---------- инструмент ----------
+    if decision.mode == "tool":
+        body = doc.get("excerpt") or doc.get("content") or ""
+        body += ("\n\nЧто потребуется: кадастровый номер или адрес объекта. "
+                 f"Если нужна консультация — позвоните {phone}.")
+        return body.strip() + tail
+
+    # ---------- цена ----------
     if decision.mode == "pricing":
         calc_url = idx.data.get("calculator_url", "https://2kad.ru/kalkulyator/")
-        tail += (
-            f"\n\nПосчитайте предварительную стоимость в калькуляторе: "
-            f"{calc_url}\n"
-            f"Точная стоимость определяется после изучения документов на объект "
-            f"и согласования объёма работ. Менеджер: {phone}."
+        body = (
+            "Стоимость зависит от вида работ, площади объекта, расстояния от Твери "
+            "и состояния документов — точный расчёт делают после изучения объекта.\n\n"
+            f"Посчитайте предварительную стоимость в калькуляторе: {calc_url}\n"
+            "Точная стоимость определяется после изучения документов на объект и "
+            f"согласования объёма работ. Перезвоним в течение рабочего дня. "
+            f"Менеджер: {phone}."
         )
-    elif not passages:
-        tail += f"\n\nЕсли нужна консультация — позвоните {phone}."
+        return body + tail
 
+    # ---------- закон: практика 2КАД + сам акт ----------
+    if decision.mode == "law":
+        related = decision.link_doc
+        passages = ""
+        if related:
+            passages = idx.best_passages(question, related, max_sentences=4,
+                                         max_chars=900)
+        act = decision.law_doc or {}
+        act_title = act.get("title") or ""
+        act_url = act.get("url") or ""
+        act_date = act.get("date") or ""
+        if act_title:
+            act_line = f"Нормативный акт: {act_title}"
+            if act_date:
+                act_line += f" от {act_date}"
+            if act_url:
+                act_line = f"Нормативный акт: [{act_title}]({act_url})"
+                if act_date:
+                    act_line += f" от {act_date}"
+            act_line += "."
+            passages = (passages + " " + act_line).strip() if passages else act_line
+        if not passages:
+            title = doc.get("title") or "материал"
+            passages = (
+                f"По теме «{title}» подробная информация собрана в материале "
+                "на сайте."
+            )
+        return passages + tail
+
+    # ---------- статья или услуга ----------
+    passages = idx.best_passages(question, doc, max_sentences=4, max_chars=900)
     if not passages:
+        title = doc.get("title") or "материал"
         passages = (
             f"По теме «{title}» подробная информация собрана в материале "
             "на сайте."
         )
+        passages += f"\n\nЕсли нужна консультация — позвоните {phone}."
     return passages + tail
+
+
+def ensure_link(text: str, decision) -> str:
+    """Гарантирует, что ответ заканчивается ссылкой на материал 2КАД.
+
+    Правило «в конце ответа — нужная услуга или нужная статья» соблюдается
+    даже если LLM про ссылку забыл.
+    """
+    if not decision.link_url:
+        return text
+    if decision.link_url in text:
+        return text
+    title = decision.link_title or "материал 2КАД"
+    link = f"\n\nПодробнее: [{title}]({decision.link_url})"
+    return (text.rstrip() + link) if text.strip() else link.lstrip()
 
 
 # ---------- FastAPI ----------
@@ -315,6 +368,8 @@ async def chat(req: ChatRequest):
                 "source_date": (
                     decision.page.get("date") if decision.page else None
                 ),
+                "link_url": decision.link_url or None,
+                "link_title": decision.link_title or None,
             }, ensure_ascii=False).encode() + b"\n"
 
             try:
@@ -390,11 +445,15 @@ async def chat(req: ChatRequest):
                         main_url = get_index().data.get(
                             "main_url", "https://2kad.ru/"
                         )
+                        link_title = decision.link_title or "Кадастровые работы 2КАД"
+                        link_url = decision.link_url or main_url
                         fallback_text = (
                             "Уточните, пожалуйста, детали — так я подберу нужный "
                             "материал. По кадастровым работам, проектированию и "
-                            f"инженерным изысканиям в Твери и области — {main_url}. "
-                            f"Менеджер: {phone}."
+                            "инженерным изысканиям в Твери и области — "
+                            f"{link_title}: {link_url}. "
+                            f"Менеджер: {phone}.\n\n"
+                            f"Подробнее: [{link_title}]({link_url})"
                         )
                         yield json.dumps({
                             "type": "content",
@@ -419,6 +478,10 @@ async def chat(req: ChatRequest):
                         return
                     elif ev["type"] == "done":
                         break
+
+                # Правило «ответ заканчивается ссылкой на материал 2КАД»
+                # соблюдается даже если LLM про ссылку забыл.
+                full = ensure_link(full, decision)
 
                 # Сохраняем в историю
                 history.append({"role": "user", "content": req.message})
@@ -459,6 +522,7 @@ async def chat(req: ChatRequest):
     except RuntimeError as e:
         log.error(f"chat_complete failed for {sid[:8]}: {e}")
         raise HTTPException(502, f"Upstream LLM error: {e}")
+    reply = ensure_link(reply, decision)
     history.append({"role": "user", "content": req.message})
     history.append({"role": "assistant", "content": reply})
     push_log({

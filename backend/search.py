@@ -1,9 +1,15 @@
 # -*- coding: utf-8 -*-
-"""Поиск по индексу знаний 2КАД: страницы сайта + посты блога.
+"""Поиск по индексу знаний 2КАД.
+
+Корпуса:
+  page — страницы сайта 2kad.ru (услуги, разделы)
+  post — статьи блога 2kad.ru
+  law  — законодательные документы (ki-rf.ru/zakon/)
+  tool — сервисы и инструменты из раздела «Полезное»
 
 Алгоритм: BM25-lite (TF * IDF) + бусты за заголовок и slug.
-Блог и страницы услуг ищутся раздельно, чтобы роутер мог решить,
-что лучше подходит под вопрос: страница услуги или статья блога.
+Корпуса ищутся раздельно, чтобы роутер мог решить, что лучше подходит
+под вопрос: услуга, статья блога, нормативный акт или инструмент.
 
 Без зависимостей (только stdlib + json/regex).
 """
@@ -25,13 +31,34 @@ STOP = set("""
 нужно надо может ли ли же бы вот там тут как
 """.split())
 
-# Маркеры вопроса, который явно про блог/законодательство
+# Маркеры вопроса, который явно «про закон/нормативку»
 BLOG_HINTS = re.compile(
     r"\b(блог|статья|статьи|новост|закон|законопроект|приказ|фз|нпа|"
     r"письмо|разъяснени|обзор|аналитик|комментар|что изменилось|"
     r"новый закон|новые правила|практика|кейс|разбор|как читать|"
     r"как получить|как внести|как снять|как проверить)\b",
     re.IGNORECASE,
+)
+
+# Маркеры законодательного вопроса — по ним ищем прежде всего нормативку
+LAW_HINTS = re.compile(
+    r"(приказ|закон\b|законодательств|нормативн|правов\w*|судебн\w*|"
+    r"письм\w* (росреестра|минстроя|минэконом)|постановлени\w*|"
+    r"№\s*[ПP]\s*/\s*\d|[ПP]\s*/\s*\d{3,4}\s*/\s*\d{2,4}|"
+    r"\d+\s*[-–—]\s*ФЗ|№\s*\d+\s*[-–—]\s*ФЗ|"
+    r"верховн\w* суд|конституционн\w* суд|арбитражн\w*|"
+    r"вступил\w* в силу|ужесточ\w*|отменен\w*|утратил\w* силу|"
+    r"изменил\w*\s+(закон|порядок|правила|требования)|"
+    r"что изменилось|действует ли|обязател\w* ли)",
+    re.IGNORECASE,
+)
+
+# Рубрики законодательных документов, релевантные кадастру и недвижимости
+LAW_CATS_RELEVANT = (
+    "нормативно-правовые акты", "письма росреестра", "верховный суд",
+    "постановление правительства", "минстрой", "конституционн",
+    "роскадастр", "арбитражные суды", "государственн", "госдум",
+    "совета федерации", "заключение",
 )
 
 
@@ -45,28 +72,34 @@ def normalize_query(text: str) -> List[str]:
     return tokenize(text)
 
 
+def normalize_act(text: str) -> str:
+    """«П / 0393 / 26» → «П/0393/26», «305 - ФЗ» → «305-ФЗ»."""
+    s = re.sub(r"\s+", "", text or "")
+    return s.replace("П/".lower(), "П/").upper().replace("ФЗ", "ФЗ")
+
+
 class SiteIndex:
-    """Загружает site_index.json и предоставляет поиск по страницам и блогу."""
+    """Загружает site_index.json и предоставляет поиск по корпусам."""
 
     def __init__(self, path: str | Path):
         self.path = Path(path)
         self.data: Dict = json.loads(self.path.read_text(encoding="utf-8"))
         self.pages = self.data["pages"]
 
-        self._tokens: Dict[int, List[str]] = {}
-        self._title_tokens: Dict[int, List[str]] = {}
-        self._slug_tokens: Dict[int, List[str]] = {}
+        self._tokens: Dict[str, List[str]] = {}
+        self._title_tokens: Dict[str, List[str]] = {}
+        self._slug_tokens: Dict[str, List[str]] = {}
         self._doc_freq: Dict[str, int] = {}
-        self._doc_len: Dict[int, int] = {}
-        self._doc_type: Dict[int, str] = {}
-        self._tf: Dict[int, Dict[str, int]] = {}
+        self._doc_len: Dict[str, int] = {}
+        self._doc_type: Dict[str, str] = {}
+        self._tf: Dict[str, Dict[str, int]] = {}
 
         all_tokens: List[str] = []
         for p in self.pages:
             content_tokens = tokenize(p.get("content", ""))
             title_tokens = tokenize(p.get("title", ""))
             slug_tokens = (p.get("slug") or "").replace("-", " ").split()
-            pid = p["id"]
+            pid = str(p["id"])
             self._tokens[pid] = content_tokens
             self._title_tokens[pid] = title_tokens
             self._slug_tokens[pid] = slug_tokens
@@ -89,7 +122,7 @@ class SiteIndex:
         self._n = len(self._tokens)
 
     # ---------------- внутреннее ----------------
-    def _bm25(self, query_tokens: List[str], pid: int) -> float:
+    def _bm25(self, query_tokens: List[str], pid: str) -> float:
         k1 = 1.5
         b = 0.75
         doc_tokens = self._tokens[pid]
@@ -134,14 +167,37 @@ class SiteIndex:
             return 2.5
         return 0.0
 
+    def _law_boost(self, doc: Dict, query: str) -> float:
+        """Вес нормативному документу: профильные рубрики + законодательные
+        маркеры в вопросе."""
+        score = 0.0
+        if doc.get("type") != "law":
+            return 0.0
+        cats = " ".join(doc.get("category_names") or []).lower()
+        if any(c in cats for c in LAW_CATS_RELEVANT):
+            score += 2.0
+        if doc.get("relevant"):
+            score += 1.0
+        if LAW_HINTS.search(query or ""):
+            score += 2.5
+        return score
+
+    def _tool_boost(self, doc: Dict, query: str) -> float:
+        """Инструменты — только если в вопросе есть их слова."""
+        if doc.get("type") != "tool":
+            return 0.0
+        q = (query or "").lower()
+        for kw in doc.get("keywords") or []:
+            if kw.lower() in q:
+                return 4.0
+        return 0.0
+
     # ---------------- публичное ----------------
     def search(self, query: str, top_k: int = 3,
                only: Optional[str] = None) -> List[Tuple[Dict, float]]:
         """(doc, score), отсортировано по убыванию.
 
-        only='page' — только страницы сайта,
-        only='post' — только посты блога,
-        None — по всем.
+        only='page' | 'post' | 'law' | 'tool' | None — фильтр корпуса.
         """
         q_tokens = normalize_query(query)
         if not q_tokens:
@@ -150,59 +206,84 @@ class SiteIndex:
         for p in self.pages:
             if only and p.get("type", "page") != only:
                 continue
-            s = self._bm25(q_tokens, p["id"]) + self._post_boost(p, query)
+            pid = str(p["id"])
+            s = (self._bm25(q_tokens, pid)
+                 + self._post_boost(p, query)
+                 + self._law_boost(p, query)
+                 + self._tool_boost(p, query))
             if s > 0:
                 scored.append((p, s))
         scored.sort(key=lambda x: -x[1])
         return scored[:top_k]
 
+    def top(self, query: str, only: str,
+            min_score: float = 1.5) -> Tuple[Optional[Dict], float]:
+        """Лучший документ корпуса и его score (0 — ничего не нашли)."""
+        res = self.search(query, top_k=1, only=only)
+        if res and res[0][1] > min_score:
+            return res[0][0], res[0][1]
+        return None, 0.0
+
     def find_service_page(self, query: str) -> Optional[Dict]:
-        """Наиболее подходящая страница услуги (без блога)."""
-        results = self.search(query, top_k=1, only="page")
-        if results and results[0][1] > 1.5:
-            return results[0][0]
-        return None
+        """Наиболее подходящая страница услуги (без блога и закона)."""
+        doc, _ = self.top(query, "page")
+        return doc
 
     def find_blog_post(self, query: str) -> Optional[Dict]:
         """Наиболее подходящая статья блога."""
-        results = self.search(query, top_k=1, only="post")
-        if results and results[0][1] > 1.5:
-            return results[0][0]
-        return None
+        doc, _ = self.top(query, "post")
+        return doc
 
-    def find_best(self, query: str) -> Tuple[Optional[Dict], Optional[Dict], float]:
-        """Возвращает (лучшая_страница, лучшая_статья_блога, score_лучшей).
+    def find_law(self, query: str) -> Optional[Dict]:
+        """Наиболее подходящий нормативный документ."""
+        doc, _ = self.top(query, "law", min_score=2.0)
+        return doc
 
-        Логика выбора:
-        - если в вопросе есть маркеры блога/закона — приоритет у статьи,
-          если её score >= 0.75 * score страницы;
-        - иначе приоритет у страницы, если её score >= score статьи;
-        - при равенстве — берём статью (она обычно точнее по конкретике).
+    def find_tool(self, query: str) -> Optional[Dict]:
+        """Инструмент из «Полезного», если вопрос про него."""
+        doc, _ = self.top(query, "tool", min_score=2.0)
+        return doc
+
+    def find_by_act(self, act: str) -> Optional[Dict]:
+        """Статья 2КАД или страница услуги, где упоминается конкретный акт
+        («П/0393», «305-ФЗ»). Берём самую свежую публикацию."""
+        needle = normalize_act(act)
+        if not needle:
+            return None
+        best: Optional[Dict] = None
+        for p in self.pages:
+            if p.get("type") not in ("post", "page"):
+                continue
+            hay = f"{p.get('title', '')}\n{p.get('content', '')}"
+            if needle.lower() in hay.lower():
+                if best is None or (p.get("date") or "") > (best.get("date") or ""):
+                    best = p
+        return best
+
+    def find_law_by_act(self, act: str) -> Optional[Dict]:
+        """Нормативный документ с указанным номером («П/0393», «305-ФЗ»).
+
+        Сначала ищем совпадение в НАЗВАНИИ документа (сам акт), и только
+        потом — в тексте (ссылка на другой акт внутри документа — это
+        не тот документ, который спрашивали).
         """
-        pages = self.search(query, top_k=3, only="page")
-        posts = self.search(query, top_k=3, only="post")
-
-        best_page = pages[0] if pages else (None, 0.0)
-        best_post = posts[0] if posts else (None, 0.0)
-
-        hints = bool(BLOG_HINTS.search(query or ""))
-
-        if best_page[0] and best_post[0]:
-            if hints:
-                # вопрос явно про закон/статью — блог важнее, если он близко
-                if best_post[1] >= best_page[1] * 0.75:
-                    return best_page[0], best_post[0], best_post[1]
-                return best_page[0], best_post[0], best_page[1]
-            # обычный вопрос — страница услуги приоритетнее
-            if best_page[1] >= best_post[1]:
-                return best_page[0], best_post[0], best_page[1]
-            return best_page[0], best_post[0], best_post[1]
-
-        if best_page[0]:
-            return best_page[0], best_post[0], best_page[1]
-        if best_post[0]:
-            return best_page[0], best_post[0], best_post[1]
-        return None, None, 0.0
+        needle = normalize_act(act).lower()
+        if not needle:
+            return None
+        in_title: Optional[Dict] = None
+        in_text: Optional[Dict] = None
+        for p in self.pages:
+            if p.get("type") != "law":
+                continue
+            title = (p.get("title") or "").lower()
+            content = (p.get("content") or "").lower()
+            if needle in title:
+                if in_title is None or (p.get("date") or "") > (in_title.get("date") or ""):
+                    in_title = p
+            elif needle in content:
+                if in_text is None or (p.get("date") or "") > (in_text.get("date") or ""):
+                    in_text = p
+        return in_title or in_text
 
     def get(self, slug: str) -> Optional[Dict]:
         for p in self.pages:
@@ -215,9 +296,10 @@ class SiteIndex:
         """Извлекательные выдержки из документа по запросу.
 
         Гарантированный ответ, когда LLM недоступен или провайдер завис:
-        текст берётся ДОСЛОВНО из найденного материала (страницы услуги или
-        статьи блога) — ничего не выдумывается, только выбираются наиболее
-        релевантные предложения и сохраняется их исходный порядок.
+        текст берётся ДОСЛОВНО из найденного материала (страницы услуги,
+        статьи блога или нормативного акта) — ничего не выдумывается,
+        только выбираются наиболее релевантные предложения и сохраняется
+        их исходный порядок.
         """
         content = (doc.get("content") or "").strip()
         if not content:
@@ -256,7 +338,6 @@ class SiteIndex:
             top = sorted(scored, key=lambda x: (-x[0], x[1]))[:max_sentences]
             picked = sorted(top, key=lambda x: x[1])
         else:
-            # совпадений нет — берём начало материала
             picked = list(enumerate(sentences))[:max_sentences]
 
         out = " ".join(s for _, _, s in picked).strip()
@@ -271,23 +352,26 @@ class SiteIndex:
         return posts[:limit]
 
     def stats(self) -> Dict:
-        pages_n = sum(1 for p in self.pages if p.get("type", "page") == "page")
-        posts_n = sum(1 for p in self.pages if p.get("type") == "post")
+        def count(t: str) -> int:
+            return sum(1 for p in self.pages if p.get("type", "page") == t)
+
         return {
-            "pages": pages_n,
-            "posts": posts_n,
+            "pages": count("page"),
+            "posts": count("post"),
+            "laws": count("law"),
+            "tools": count("tool"),
             "total": len(self.pages),
             "blog_stats": self.data.get("blog_stats", {}),
         }
 
 
 if __name__ == "__main__":
-    import sys
     idx_path = Path(__file__).parent.parent / "data" / "site_index.json"
     idx = SiteIndex(idx_path)
     st = idx.stats()
     print(f"Loaded {st['total']} docs "
-          f"({st['pages']} pages, {st['posts']} posts)\n")
+          f"({st['pages']} pages, {st['posts']} posts, "
+          f"{st['laws']} laws, {st['tools']} tools)\n")
     while True:
         try:
             q = input("QUERY> ").strip()
@@ -297,12 +381,11 @@ if __name__ == "__main__":
             continue
         if q in ("exit", "quit"):
             break
-        print("--- blog ---")
-        for p, s in idx.search(q, top_k=3, only="post"):
-            print(f"  {s:6.2f}  {p['url']}")
-            print(f"         {p['title']}")
-        print("--- pages ---")
-        for p, s in idx.search(q, top_k=3, only="page"):
-            print(f"  {s:6.2f}  {p['url']}")
-            print(f"         {p['title']}")
+        for only in ("law", "post", "page", "tool"):
+            hits = idx.search(q, top_k=2, only=only)
+            if hits:
+                print(f"--- {only} ---")
+                for p, s in hits:
+                    print(f"  {s:6.2f}  {p['title'][:80]}")
+                    print(f"         {p['url']}")
         print()

@@ -1,863 +1,330 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Умный помощник по недвижимости — 2КАД</title>
-<meta name="description" content="ИИ-ассистент 2КАД: ответы по кадастру, межеванию, оформлению документов — по базе знаний компании и блогу 2kad.ru.">
-<meta name="robots" content="noindex">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ассистент 2КАД — вопросы о кадастре и документах</title>
+<meta name="description" content="Задайте вопрос о кадастровых работах, документах и законодательстве — ответит виртуальный ассистент 2КАД.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="preconnect" href="https://chatbot.dev.ii4ki.ru">
-<link href="https://fonts.googleapis.com/css2?family=Prata&family=PT+Serif:ital,wght@0,400;0,700;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
 <style>
-/* ============================================================
-   2КАД · КАДРОВЫЕ ИЗВЕСТИЯ
-   Журнальный разворот: полоса 1 — лид с кадастровым чертежом,
-   полоса 2 — эфимерия (чат ассистента).
-
-   Палитра:
-     paper      #FCFBF8  бумага
-     paper-deep #F1EFE8  тонированная полоса
-     ink        #17181A  типографский чёрный
-     ink-soft   #5C6068  вторичный текст
-     indigo     #1F4B6E  синька технического чертежа
-     stamp      #C0242C  сургучный красный штамп
-
-   Гарнитуры:
-     display   Prata        — Didone, кириллица, журнальный заголовок
-     body      PT Serif     — русская газетная гарнитура
-     utility   IBM Plex Mono— подписи, координаты, колонтитулы
-   ============================================================ */
-
-:root {
-  --paper: #FCFBF8;
-  --paper-deep: #F1EFE8;
-  --paper-warm: #F7F4ED;
-  --ink: #17181A;
-  --ink-soft: #5C6068;
-  --ink-faint: #8A8E96;
-  --indigo: #1F4B6E;
-  --indigo-soft: #4A7898;
-  --stamp: #C0242C;
-  --rule: #C9C4B6;
-  --rule-fine: #E2DED2;
-
-  --serif: 'PT Serif', Georgia, serif;
-  --display: 'Prata', 'PT Serif', Georgia, serif;
-  --mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
-}
-
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-html { -webkit-text-size-adjust: 100%; }
-
-body {
-  font-family: var(--serif);
-  background: var(--paper);
-  color: var(--ink);
-  line-height: 1.62;
-  font-size: 16px;
-  overflow-x: hidden;
-  -webkit-font-smoothing: antialiased;
-}
-
-/* Бумажная фактура — едва заметная зернистость */
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  opacity: .5;
-  background-image:
-    radial-gradient(circle at 18% 22%, rgba(31,75,110,.035) 0 1px, transparent 1px),
-    radial-gradient(circle at 62% 58%, rgba(23,24,26,.028) 0 1px, transparent 1px),
-    radial-gradient(circle at 84% 12%, rgba(192,36,44,.03) 0 1px, transparent 1px);
-  background-size: 37px 41px, 53px 47px, 29px 33px;
-}
-
-a { color: inherit; text-decoration: none; }
-button { font-family: inherit; cursor: pointer; }
-::selection { background: rgba(31,75,110,.16); }
-
-/* ============================================================
-   РАЗВОРОТ
-   ============================================================ */
-.spread {
-  position: relative;
-  z-index: 1;
-  max-width: 1440px;
-  margin: 0 auto;
-  background: var(--paper);
-  box-shadow: 0 0 0 1px var(--rule-fine), 0 30px 80px -40px rgba(23,24,26,.35);
-}
-
-/* ---- Колонтитул издания (running head) ---- */
-.running-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 20px;
-  padding: 14px 40px 12px;
-  border-bottom: 1px solid var(--ink);
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-}
-.running-head .rh-title { color: var(--ink); font-weight: 500; }
-.running-head .rh-title b { color: var(--stamp); font-weight: 500; }
-.running-head .rh-meta { display: flex; gap: 22px; white-space: nowrap; }
-
-/* ---- Полосы ---- */
-.columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  position: relative;
-}
-
-/* Корень разворота — центральный волосок */
-.columns::after {
-  content: "";
-  position: absolute;
-  top: 0; bottom: 0; left: 50%;
-  width: 1px;
-  background: var(--rule);
-  transform: translateX(-.5px);
-  z-index: 3;
-}
-
-.strip { padding: 34px 40px 0; min-width: 0; }
-.strip-left { padding-right: 44px; }
-.strip-right { padding-left: 44px; }
-
-/* ---- Полосный подвал ---- */
-.strip-foot {
-  margin-top: 28px;
-  padding: 9px 40px 14px;
-  border-top: 1px solid var(--rule-fine);
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: .13em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-}
-
-/* ============================================================
-   ПОЛОСА 1 — ЛИД
-   ============================================================ */
-.kicker {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  font-family: var(--mono);
-  font-size: 10.5px;
-  letter-spacing: .2em;
-  text-transform: uppercase;
-  color: var(--indigo);
-  margin-bottom: 20px;
-}
-.kicker::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
-
-/* ---- Чертёж: кадастровый план ---- */
-.plan-sheet {
-  position: relative;
-  border: 1px solid var(--indigo);
-  background: #FDFDFB;
-  margin-bottom: 12px;
-  overflow: hidden;
-}
-.plan-sheet svg { display: block; width: 100%; height: auto; }
-
-.stamp {
-  position: absolute;
-  right: 16px;
-  bottom: 14px;
-  border: 2.5px solid var(--stamp);
-  color: var(--stamp);
-  font-family: var(--mono);
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: .13em;
-  text-transform: uppercase;
-  padding: 5px 9px;
-  transform: rotate(-7deg);
-  opacity: .82;
-  pointer-events: none;
-  box-shadow: inset 0 0 0 1px rgba(192,36,44,.35);
-}
-
-.fig-caption {
-  font-family: var(--mono);
-  font-size: 11px;
-  line-height: 1.55;
-  color: var(--ink-soft);
-  padding-bottom: 26px;
-  border-bottom: 1px solid var(--rule-fine);
-  margin-bottom: 24px;
-}
-.fig-caption .fig-num { color: var(--stamp); font-weight: 500; letter-spacing: .06em; }
-.fig-caption .fig-title { color: var(--ink); }
-
-.headline {
-  font-family: var(--display);
-  font-size: clamp(38px, 4.6vw, 66px);
-  line-height: 1.06;
-  letter-spacing: -.015em;
-  color: var(--ink);
-  margin-bottom: 18px;
-}
-.headline em { font-style: normal; color: var(--indigo); }
-
-.lead {
-  font-size: 17.5px;
-  line-height: 1.66;
-  color: var(--ink);
-  max-width: 62ch;
-}
-.dropcap {
-  float: left;
-  font-family: var(--display);
-  font-size: 62px;
-  line-height: .82;
-  padding: 6px 10px 0 0;
-  color: var(--stamp);
-}
-
-.facts {
-  margin-top: 26px;
-  border-top: 1px solid var(--ink);
-  border-bottom: 1px solid var(--rule-fine);
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-}
-.fact { padding: 14px 16px 15px 0; border-right: 1px solid var(--rule-fine); }
-.fact:last-child { border-right: 0; padding-right: 0; }
-.fact + .fact { padding-left: 16px; }
-.fact-n {
-  font-family: var(--display);
-  font-size: 27px;
-  line-height: 1;
-  color: var(--indigo);
-  margin-bottom: 5px;
-}
-.fact-l {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  line-height: 1.45;
-}
-
-/* ============================================================
-   ПОЛОСА 2 — ЭФИМЕРИЯ: ЧАТ
-   ============================================================ */
-.strip-right > .kicker { margin-bottom: 16px; }
-
-.inset {
-  margin-top: 26px;
-  border: 1px solid var(--rule);
-  background: var(--paper-warm);
-  padding: 18px 20px 16px;
-}
-.inset-title {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: .18em;
-  text-transform: uppercase;
-  color: var(--ink);
-  padding-bottom: 9px;
-  border-bottom: 1px solid var(--rule);
-  margin-bottom: 12px;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-}
-.inset-title span:last-child { color: var(--stamp); }
-.inset-item {
-  display: block;
-  padding: 9px 0;
-  border-bottom: 1px dotted var(--rule);
-  transition: color .15s;
-}
-.inset-item:last-child { border-bottom: 0; padding-bottom: 2px; }
-.inset-item:hover .inset-h { color: var(--indigo); }
-.inset-meta {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: .1em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  margin-bottom: 3px;
-}
-.inset-h {
-  font-size: 14.5px;
-  line-height: 1.38;
-  color: var(--ink);
-  transition: color .15s;
-}
-
-.chat {
-  border: 1px solid var(--ink);
-  background: #fff;
-  display: flex;
-  flex-direction: column;
-  height: 560px;
-}
-.chat-head {
-  padding: 11px 16px;
-  border-bottom: 1px solid var(--ink);
-  background: var(--ink);
-  color: var(--paper);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.chat-head h2 {
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: .16em;
-  text-transform: uppercase;
-}
-.chat-head .chat-state {
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: #8FB8D4;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.chat-state::before {
-  content: "";
-  width: 6px; height: 6px;
-  border-radius: 50%;
-  background: #6FD3A8;
-  animation: blink 2.4s ease-in-out infinite;
-}
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.28} }
-
-.chat-body {
-  flex: 1;
-  overflow-y: auto;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 15px;
-  scroll-behavior: smooth;
-}
-.chat-body::-webkit-scrollbar { width: 5px; }
-.chat-body::-webkit-scrollbar-track { background: var(--paper-deep); }
-.chat-body::-webkit-scrollbar-thumb { background: var(--rule); }
-
-.say {
-  border: 1px solid var(--rule);
-  border-left: 2px solid var(--indigo);
-  background: #fff;
-  padding: 12px 14px 11px;
-  font-size: 15px;
-  line-height: 1.58;
-  max-width: 94%;
-  animation: setType .32s cubic-bezier(.22,.61,.36,1);
-}
-.say:first-child { max-width: 100%; }
-.say-label {
-  font-family: var(--mono);
-  font-size: 9px;
-  letter-spacing: .17em;
-  text-transform: uppercase;
-  color: var(--indigo);
-  margin-bottom: 7px;
-}
-.say a { color: var(--indigo); border-bottom: 1px solid rgba(31,75,110,.4); }
-.say a:hover { border-bottom-color: var(--indigo); }
-.say strong { font-weight: 700; }
-
-.ask {
-  align-self: flex-end;
-  max-width: 88%;
-  border-left: 2px solid var(--stamp);
-  background: var(--paper-warm);
-  padding: 10px 13px;
-  font-size: 15px;
-  line-height: 1.5;
-  animation: setType .3s cubic-bezier(.22,.61,.36,1);
-}
-@keyframes setType {
-  from { opacity: 0; transform: translateY(7px); }
-  to   { opacity: 1; transform: none; }
-}
-
-.src {
-  margin-top: 10px;
-  padding-top: 9px;
-  border-top: 1px solid var(--rule-fine);
-  font-family: var(--mono);
-  font-size: 10px;
-  line-height: 1.55;
-  letter-spacing: .04em;
-  color: var(--ink-soft);
-}
-.src-kind {
-  color: var(--stamp);
-  letter-spacing: .14em;
-  text-transform: uppercase;
-  font-weight: 500;
-}
-.src a { color: var(--indigo); border-bottom: 1px solid rgba(31,75,110,.35); }
-
-.typing { display: inline-flex; gap: 4px; align-items: center; padding: 5px 0; }
-.typing i {
-  width: 5px; height: 5px;
-  border-radius: 50%;
-  background: var(--ink-faint);
-  animation: setDots 1.3s ease-in-out infinite;
-}
-.typing i:nth-child(2) { animation-delay: .14s; }
-.typing i:nth-child(3) { animation-delay: .28s; }
-@keyframes setDots {
-  0%,60%,100% { transform: translateY(0); opacity: .35; }
-  30% { transform: translateY(-4px); opacity: 1; }
-}
-
-.quick {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 10px 16px;
-  border-top: 1px solid var(--rule-fine);
-  background: var(--paper);
-}
-.quick button {
-  font-family: var(--mono);
-  font-size: 10px;
-  letter-spacing: .06em;
-  color: var(--ink-soft);
-  background: transparent;
-  border: 1px solid var(--rule);
-  padding: 5px 9px;
-  transition: all .15s;
-  text-align: left;
-}
-.quick button:hover {
-  border-color: var(--indigo);
-  color: var(--indigo);
-  background: rgba(31,75,110,.05);
-}
-
-.chat-foot {
-  border-top: 1px solid var(--ink);
-  padding: 12px 16px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  background: #fff;
-}
-.chat-foot input {
-  flex: 1;
-  border: 0;
-  border-bottom: 1px solid var(--rule);
-  background: transparent;
-  padding: 8px 2px;
-  font-family: var(--serif);
-  font-size: 15px;
-  color: var(--ink);
-  outline: none;
-  transition: border-color .2s;
-}
-.chat-foot input:focus { border-bottom-color: var(--indigo); }
-.chat-foot input::placeholder { color: var(--ink-faint); font-style: italic; }
-.chat-foot button {
-  width: 38px; height: 38px;
-  border: 1px solid var(--ink);
-  background: var(--ink);
-  color: var(--paper);
-  font-size: 16px;
-  line-height: 1;
-  transition: background .15s, color .15s;
-}
-.chat-foot button:hover:not(:disabled) { background: var(--stamp); border-color: var(--stamp); }
-.chat-foot button:disabled { opacity: .35; cursor: not-allowed; }
-
-/* ============================================================
-   АПСИД
-   ============================================================ */
-.press {
-  margin-top: 26px;
-  border: 1px solid var(--ink);
-  padding: 16px 18px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-  background: var(--paper);
-}
-.press p {
-  font-size: 14px;
-  color: var(--ink-soft);
-  max-width: 42ch;
-  line-height: 1.5;
-}
-.press a {
-  font-family: var(--mono);
-  font-size: 12px;
-  letter-spacing: .09em;
-  color: var(--stamp);
-  border-bottom: 1px solid var(--stamp);
-  padding-bottom: 2px;
-  white-space: nowrap;
-}
-.press a:hover { color: var(--ink); border-bottom-color: var(--ink); }
-
-.colophon {
-  padding: 16px 40px 22px;
-  border-top: 1px solid var(--ink);
-  font-family: var(--mono);
-  font-size: 9.5px;
-  letter-spacing: .11em;
-  text-transform: uppercase;
-  color: var(--ink-faint);
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  flex-wrap: wrap;
-}
-.colophon a { color: var(--indigo); }
-
-/* ============================================================
-   «ПРОСТУПАЮТ ЧЕРНИЛА» — единственная оркестрованная последовательность
-   ============================================================ */
-.draw-boundary {
-  stroke-dasharray: 1400;
-  stroke-dashoffset: 1400;
-  animation: draw 2.4s cubic-bezier(.4,0,.2,1) .55s forwards;
-}
-@keyframes draw { to { stroke-dashoffset: 0; } }
-
-.node { opacity: 0; animation: pop .42s ease-out forwards; transform-origin: center; transform-box: fill-box; }
-.node:nth-of-type(1) { animation-delay: 1.5s; }
-.node:nth-of-type(2) { animation-delay: 1.72s; }
-.node:nth-of-type(3) { animation-delay: 1.94s; }
-.node:nth-of-type(4) { animation-delay: 2.16s; }
-.node:nth-of-type(5) { animation-delay: 2.38s; }
-.node:nth-of-type(6) { animation-delay: 2.6s; }
-.node:nth-of-type(7) { animation-delay: 2.82s; }
-@keyframes pop {
-  from { opacity: 0; transform: scale(.4); }
-  to   { opacity: 1; transform: scale(1); }
-}
-
-.callout { opacity: 0; animation: fadeUp .5s ease-out forwards; }
-.callout:nth-of-type(1) { animation-delay: 2.6s; }
-.callout:nth-of-type(2) { animation-delay: 2.9s; }
-.callout:nth-of-type(3) { animation-delay: 3.2s; }
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(5px); }
-  to   { opacity: 1; transform: none; }
-}
-
-.stamp { animation: stampIn .5s cubic-bezier(.2,1.3,.4,1) 3.35s both; }
-@keyframes stampIn {
-  from { opacity: 0; transform: rotate(-7deg) scale(2.1); }
-  to   { opacity: .82; transform: rotate(-7deg) scale(1); }
-}
-
-.grid-drift { animation: drift 46s linear infinite; }
-@keyframes drift { to { transform: translateY(-40px); } }
-
-.band { animation: bandIn .7s cubic-bezier(.22,.61,.36,1) both; }
-.band-1 { animation-delay: .15s; }
-.band-2 { animation-delay: .35s; }
-@keyframes bandIn {
-  from { opacity: 0; transform: translateY(12px); }
-  to   { opacity: 1; transform: none; }
-}
-
-/* ============================================================
-   АДАПТИВ
-   ============================================================ */
-@media (max-width: 1080px) {
-  .columns { grid-template-columns: 1fr; }
-  .columns::after { display: none; }
-  .strip { padding: 26px 26px 0; }
-  .strip-left { padding-right: 26px; }
-  .strip-right { padding-left: 26px; padding-top: 0; }
-  .strip-right .kicker { margin-top: 30px; }
-  .running-head { padding: 12px 26px 10px; flex-wrap: wrap; gap: 8px; }
-  .strip-foot, .colophon { padding-left: 26px; padding-right: 26px; }
-  .chat { height: 520px; }
-}
-
-@media (max-width: 620px) {
-  body { font-size: 15.5px; }
-  .running-head { font-size: 9.5px; }
-  .running-head .rh-meta { gap: 14px; }
-  .strip { padding: 20px 16px 0; }
-  .strip-left { padding-right: 16px; }
-  .strip-right { padding-left: 16px; }
-  .headline { font-size: clamp(31px, 9vw, 44px); }
-  .lead { font-size: 16px; }
-  .dropcap { font-size: 50px; }
-  .facts { grid-template-columns: 1fr; }
-  .fact { border-right: 0; border-bottom: 1px solid var(--rule-fine); padding: 12px 0; }
-  .fact + .fact { padding-left: 0; }
-  .fact:last-child { border-bottom: 0; }
-  .chat { height: 480px; }
-  .say, .ask { max-width: 100%; }
-  .strip-foot, .colophon { padding-left: 16px; padding-right: 16px; }
-}
-
-/* ============================================================
-   УМЕНЬШЕНИЕ ДВИЖЕНИЯ
-   ============================================================ */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: .01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: .01ms !important;
+  :root{
+    --bg:#FAFAF9;
+    --ink:#17181A;
+    --ink-2:#4B5158;
+    --muted:#8A9099;
+    --line:#E6E4E0;
+    --line-2:#F1EFEB;
+    --accent:#CC2C2C;
+    --max:720px;
   }
-  .draw-boundary { stroke-dashoffset: 0; }
-  .node, .callout, .stamp { opacity: 1; }
-}
+
+  *,*::before,*::after{box-sizing:border-box}
+
+  html,body{height:100%}
+  body{
+    margin:0;
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Manrope',system-ui,-apple-system,'Segoe UI',sans-serif;
+    font-size:16px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    text-rendering:optimizeLegibility;
+  }
+
+  /* ---------- каркас ---------- */
+  .stage{
+    min-height:100dvh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:clamp(28px,5vh,52px);
+    padding:clamp(28px,6vh,64px) 20px;
+  }
+  .stage.is-chat{justify-content:flex-start;gap:20px}
+
+  .col{
+    width:100%;
+    max-width:var(--max);
+    margin:0 auto;
+  }
+
+  /* ---------- шапка ---------- */
+  .head{text-align:center}
+  .head h1{
+    margin:0;
+    font-size:clamp(24px,4.4vw,34px);
+    font-weight:600;
+    letter-spacing:-0.02em;
+    line-height:1.2;
+  }
+  .head p{
+    margin:10px 0 0;
+    color:var(--muted);
+    font-size:15px;
+    font-weight:400;
+  }
+
+  /* ---------- лента диалога ---------- */
+  .log{
+    display:none;
+    width:100%;
+    max-width:var(--max);
+    flex:1 1 auto;
+    overflow-y:auto;
+    padding:4px 0 8px;
+    scrollbar-width:thin;
+  }
+  .stage.is-chat .log{display:block}
+
+  .turn{margin:0 0 26px}
+  .ask{
+    margin:0 0 12px auto;
+    max-width:82%;
+    width:max-content;
+    padding:10px 16px;
+    border-radius:14px;
+    background:#F1EFEB;
+    color:var(--ink);
+    font-size:15.5px;
+    line-height:1.5;
+    white-space:pre-wrap;
+    word-break:break-word;
+  }
+  .say{
+    margin:0;
+    max-width:100%;
+    color:var(--ink);
+    font-size:16px;
+    line-height:1.68;
+    word-break:break-word;
+  }
+  .say p{margin:0 0 12px}
+  .say p:last-child{margin-bottom:0}
+  .say strong{font-weight:600}
+  .say a{
+    color:var(--ink);
+    text-decoration:underline;
+    text-decoration-color:#C9C5BF;
+    text-underline-offset:3px;
+    transition:text-decoration-color .15s ease,color .15s ease;
+  }
+  .say a:hover{color:var(--accent);text-decoration-color:var(--accent)}
+
+  .dots{display:inline-flex;gap:5px;align-items:center;padding:4px 0}
+  .dots i{
+    width:6px;height:6px;border-radius:50%;
+    background:#C9C5BF;
+    animation:blink 1.25s infinite ease-in-out;
+  }
+  .dots i:nth-child(2){animation-delay:.18s}
+  .dots i:nth-child(3){animation-delay:.36s}
+  @keyframes blink{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
+
+  /* ---------- строка ввода ---------- */
+  .composer{
+    width:100%;
+    max-width:var(--max);
+    position:relative;
+  }
+  .composer form{
+    display:flex;
+    align-items:center;
+    gap:12px;
+    border-bottom:1px solid var(--line);
+    transition:border-color .18s ease;
+  }
+  .composer form:focus-within{border-color:var(--ink)}
+  .composer input{
+    flex:1 1 auto;
+    min-width:0;
+    border:0;
+    background:transparent;
+    padding:14px 0;
+    font-family:inherit;
+    font-size:clamp(16px,2.6vw,19px);
+    font-weight:400;
+    color:var(--ink);
+    outline:none;
+  }
+  .composer input::placeholder{color:#B6B2AC}
+  .composer button{
+    flex:0 0 auto;
+    border:0;
+    background:transparent;
+    color:var(--muted);
+    cursor:pointer;
+    padding:8px 2px 8px 8px;
+    display:flex;
+    align-items:center;
+    transition:color .18s ease,transform .18s ease;
+  }
+  .composer button:hover{color:var(--accent)}
+  .composer button:active{transform:scale(.94)}
+  .composer button svg{display:block}
+  .composer button:disabled{opacity:.35;cursor:default}
+
+  /* ---------- подсказки ---------- */
+  .hints{
+    width:100%;
+    max-width:var(--max);
+    transition:opacity .3s ease,max-height .35s ease;
+    overflow:hidden;
+  }
+  .stage.is-chat .hints{display:none}
+
+  .chips{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    justify-content:center;
+  }
+  .chip{
+    appearance:none;
+    border:1px solid var(--line);
+    background:transparent;
+    color:var(--ink-2);
+    border-radius:999px;
+    padding:8px 15px;
+    font-family:inherit;
+    font-size:14px;
+    line-height:1.3;
+    cursor:pointer;
+    transition:border-color .16s ease,color .16s ease,background .16s ease;
+  }
+  .chip:hover{border-color:#C9C5BF;color:var(--ink);background:#fff}
+
+  .topics{
+    margin-top:34px;
+    padding-top:26px;
+    border-top:1px solid var(--line-2);
+  }
+  .topics h2{
+    margin:0 0 16px;
+    font-size:12px;
+    font-weight:600;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--muted);
+    text-align:center;
+  }
+  .topics ul{
+    list-style:none;
+    margin:0;
+    padding:0;
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:22px 34px;
+  }
+  .topics li{min-width:0}
+  .topics b{
+    display:block;
+    font-weight:600;
+    font-size:15px;
+    margin-bottom:3px;
+  }
+  .topics span{
+    display:block;
+    font-size:13.5px;
+    color:var(--muted);
+    line-height:1.5;
+  }
+
+  .foot{
+    width:100%;
+    max-width:var(--max);
+    text-align:center;
+    color:#B6B2AC;
+    font-size:12.5px;
+  }
+
+  /* ---------- адаптив ---------- */
+  @media (max-width:640px){
+    .stage{gap:24px;padding:22px 16px}
+    .topics ul{grid-template-columns:1fr;gap:16px}
+    .topics{margin-top:26px;padding-top:20px}
+    .ask{max-width:92%}
+  }
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}
+  }
 </style>
 </head>
 <body>
 
-<main class="spread">
+<div class="stage" id="stage">
 
-  <!-- ══ КОЛОНТИТУЛ ИЗДАНИЯ ══ -->
-  <header class="running-head">
-    <div class="rh-title"><b>2КАД</b> · Кадастровые известия</div>
-    <div class="rh-meta">
-      <span id="rh-issue">Выпуск № 1</span>
-      <span id="rh-date">Тверь</span>
-      <span>Приёмная 2КАД</span>
-    </div>
+  <header class="head col">
+    <h1>Ассистент 2КАД</h1>
+    <p>Спросите о кадастре, документах или законе — отвечу по делу и дам ссылку на нужный материал.</p>
   </header>
 
-  <div class="columns">
+  <div class="log" id="log" aria-live="polite"></div>
 
-    <!-- ══════════ ПОЛОСА 1 ══════════ -->
-    <section class="strip strip-left band band-1">
+  <div class="hints" id="hints">
+    <div class="chips" id="chips">
+      <button class="chip" type="button">Сколько стоит межевание участка?</button>
+      <button class="chip" type="button">Какие документы нужны для техплана?</button>
+      <button class="chip" type="button">Что изменилось в приказах Росреестра?</button>
+      <button class="chip" type="button">Проверить участок на затопление</button>
+      <button class="chip" type="button">Как объединить два участка?</button>
+    </div>
 
-      <div class="kicker">Отдел ИИ-консультаций · 2КАД</div>
+    <div class="topics">
+      <h2>Какие ответы я могу дать</h2>
+      <ul>
+        <li>
+          <b>Стоимость и сроки</b>
+          <span>Предварительный расчёт по вашему объекту и виду работ.</span>
+        </li>
+        <li>
+          <b>Документы и процедура</b>
+          <span>Что нужно для межевания, техплана, оформления прав и ввода в эксплуатацию.</span>
+        </li>
+        <li>
+          <b>Законодательство</b>
+          <span>Приказы Росреестра, законы и судебная практика — что изменилось и как это применить.</span>
+        </li>
+        <li>
+          <b>Проверка участка</b>
+          <span>Затопление, кадастровая стоимость, что государство знает о вашем объекте.</span>
+        </li>
+      </ul>
+    </div>
+  </div>
 
-      <figure class="plan-sheet">
-        <svg viewBox="0 0 620 400" role="img" aria-label="Схема кадастрового плана земельного участка с координатной сеткой и точками поворота">
-          <defs>
-            <pattern id="grid" width="34" height="34" patternUnits="userSpaceOnUse">
-              <path d="M34 0H0V34" fill="none" stroke="#1F4B6E" stroke-width=".5" opacity=".3"/>
-            </pattern>
-            <pattern id="gridMajor" width="170" height="170" patternUnits="userSpaceOnUse">
-              <rect width="170" height="170" fill="url(#grid)"/>
-              <path d="M170 0H0V170" fill="none" stroke="#1F4B6E" stroke-width=".9" opacity=".42"/>
-            </pattern>
-          </defs>
-
-          <rect width="620" height="400" fill="#FDFDFB"/>
-          <g class="grid-drift">
-            <rect x="0" y="-40" width="620" height="440" fill="url(#gridMajor)"/>
-          </g>
-
-          <g stroke="#1F4B6E" stroke-width=".8" opacity=".55">
-            <line x1="60" y1="0" x2="60" y2="400" stroke-dasharray="6 4"/>
-            <line x1="0" y1="330" x2="620" y2="330" stroke-dasharray="6 4"/>
-          </g>
-          <g font-family="IBM Plex Mono, monospace" font-size="8.5" fill="#4A7898" opacity=".85">
-            <text x="64" y="14">X 482 730</text>
-            <text x="6" y="326">Y 1 842 116</text>
-          </g>
-
-          <g opacity=".5">
-            <path d="M430 40 L560 68 L548 156 L424 138 Z" fill="none"
-                  stroke="#8A8E96" stroke-width=".9" stroke-dasharray="5 3"/>
-            <text x="452" y="100" font-family="IBM Plex Mono, monospace"
-                  font-size="8" fill="#8A8E96" letter-spacing="1">СОСЕДНИЙ ЗУ</text>
-          </g>
-
-          <path class="draw-boundary"
-                d="M96 84 L318 66 L424 138 L406 288 L212 316 L84 232 Z"
-                fill="rgba(31,75,110,.05)"
-                stroke="#1F4B6E" stroke-width="2.1"
-                stroke-linejoin="round"/>
-
-          <g fill="#FDFDFB" stroke="#C0242C" stroke-width="2">
-            <circle class="node" cx="96"  cy="84"  r="4.6"/>
-            <circle class="node" cx="318" cy="66"  r="4.6"/>
-            <circle class="node" cx="424" cy="138" r="4.6"/>
-            <circle class="node" cx="406" cy="288" r="4.6"/>
-            <circle class="node" cx="212" cy="316" r="4.6"/>
-            <circle class="node" cx="84"  cy="232" r="4.6"/>
-          </g>
-          <g font-family="IBM Plex Mono, monospace" font-size="7.5" fill="#C0242C">
-            <text class="node" x="83"  y="78">1</text>
-            <text class="node" x="311" y="60">2</text>
-            <text class="node" x="428" y="134">3</text>
-            <text class="node" x="410" y="302">4</text>
-            <text class="node" x="216" y="330">5</text>
-            <text class="node" x="71"  y="226">6</text>
-          </g>
-
-          <g class="callout" stroke="#1F4B6E" stroke-width=".9" fill="none">
-            <path d="M318 66 L470 42"/>
-            <circle cx="318" cy="66" r="2.2" fill="#1F4B6E" stroke="none"/>
-          </g>
-          <g class="callout">
-            <text x="474" y="40" font-family="IBM Plex Mono, monospace"
-                  font-size="8.5" fill="#1F4B6E" letter-spacing=".7">МОМЕНТ ПОВОРОТА</text>
-            <text x="474" y="52" font-family="IBM Plex Mono, monospace"
-                  font-size="7.5" fill="#5C6068">N 482 736,88</text>
-          </g>
-
-          <g class="callout" stroke="#1F4B6E" stroke-width=".9" fill="none">
-            <path d="M212 316 L206 366 L322 366"/>
-            <circle cx="212" cy="316" r="2.2" fill="#1F4B6E" stroke="none"/>
-          </g>
-          <g class="callout">
-            <text x="328" y="364" font-family="IBM Plex Mono, monospace"
-                  font-size="8.5" fill="#1F4B6E" letter-spacing=".7">ПИКЕТАЖ</text>
-            <text x="328" y="375" font-family="IBM Plex Mono, monospace"
-                  font-size="7.5" fill="#5C6068">S = 1 842 м²</text>
-          </g>
-
-          <g class="callout">
-            <rect x="14" y="344" width="176" height="46" fill="#FDFDFB"
-                  stroke="#1F4B6E" stroke-width=".8" opacity=".95"/>
-            <text x="22" y="357" font-family="IBM Plex Mono, monospace"
-                  font-size="7.5" fill="#1F4B6E" letter-spacing=".9">УСЛОВНЫЕ ОБОЗНАЧЕНИЯ</text>
-            <g stroke="#1F4B6E" stroke-width=".8" fill="none" opacity=".8">
-              <circle cx="26" cy="368" r="2.6"/>
-              <line x1="38" y1="368" x2="66" y2="368"/>
-              <rect x="78" y="365" width="14" height="6"/>
-              <path d="M104 365h14v6h-14z" stroke-dasharray="3 2"/>
-            </g>
-            <g font-family="IBM Plex Mono, monospace" font-size="6.5" fill="#5C6068">
-              <text x="70" y="371">граница</text>
-              <text x="140" y="371">ЗУ</text>
-              <text x="70" y="383">поворот</text>
-              <text x="140" y="383">сосед</text>
-            </g>
-          </g>
+  <div class="composer col">
+    <form id="form" autocomplete="off">
+      <input id="q" type="text" placeholder="Напишите вопрос…" aria-label="Вопрос ассистенту">
+      <button id="send" type="submit" aria-label="Отправить вопрос" disabled>
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 12h15"></path>
+          <path d="M13 6l6 6-6 6"></path>
         </svg>
-        <div class="stamp">2КАД · Тверь<br>М. П.</div>
-      </figure>
-
-      <figcaption class="fig-caption">
-        <span class="fig-num">Рис. 1.</span>
-        <span class="fig-title">Контур земельного участка с точками поворота.</span>
-        Шесть узлов, координатная сетка, пикетаж 1 842 м². Масштаб условный —
-        рабочий чертёж кадастрового инженера перед выносом границ в натуру.
-      </figcaption>
-
-      <h1 class="headline">
-        Умный помощник<br>по <em>недвижимости</em>
-      </h1>
-
-      <p class="lead">
-        <span class="dropcap">Я</span> читаю базу знаний 2КАД и блог о кадастре,
-        чтобы отвечать на ваши вопросы по документам и участкам. Скажите,
-        что случилось с вашей землёй — и получите ответ со ссылкой на
-        разбор, приказ или пошаговую инструкцию. Там, где нужен живой
-        специалист, я дам номер менеджера.
-      </p>
-
-      <div class="facts">
-        <div class="fact">
-          <div class="fact-n" id="f-posts">—</div>
-          <div class="fact-l">материалов<br>в базе</div>
-        </div>
-        <div class="fact">
-          <div class="fact-n">1 700 000</div>
-          <div class="fact-l">м² оформлено<br>с 2013 года</div>
-        </div>
-        <div class="fact">
-          <div class="fact-n">36</div>
-          <div class="fact-l">регионов<br>работы</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ══════════ ПОЛОСА 2 ══════════ -->
-    <section class="strip strip-right band band-2">
-
-      <div class="kicker">Эфимерия · приёмная</div>
-
-      <div class="chat">
-        <div class="chat-head">
-          <h2>Ассистент 2КАД</h2>
-          <div class="chat-state">на связи</div>
-        </div>
-        <div class="chat-body" id="chat-body"></div>
-        <div class="quick" id="quick"></div>
-        <form class="chat-foot" id="chat-form">
-          <input type="text" id="chat-input" autocomplete="off" maxlength="500"
-                 placeholder="Опишите вопрос — про участок, дом или документы">
-          <button type="submit" id="chat-send" aria-label="Отправить">→</button>
-        </form>
-      </div>
-
-      <aside class="inset">
-        <div class="inset-title">
-          <span>Свежие материалы</span>
-          <span id="inset-count">Блог 2КАД</span>
-        </div>
-        <div id="inset-list">
-          <div class="inset-item">
-            <div class="inset-meta">Загрузка…</div>
-          </div>
-        </div>
-      </aside>
-
-      <div class="press">
-        <p>Ассистент отвечает по материалам 2КАД. Для договора, сметы или
-           сложного случая нужен живой специалист.</p>
-        <a href="tel:+74822415768">+7 (4822) 41-57-68 →</a>
-      </div>
-    </section>
+      </button>
+    </form>
   </div>
 
-  <div class="strip-foot">
-    <span>Полоса 1 · Лид</span>
-    <span>Полоса 2 · Эфимерия</span>
-  </div>
+  <div class="foot">ООО «Центр Недвижимости 2кад» · Тверь · +7 (4822) 41-57-68</div>
 
-  <div class="colophon">
-    <span>© 2013–2026 ООО «Центр Недвижимости 2кад» · Тверь</span>
-    <span><a href="https://2kad.ru/">2kad.ru</a> · Ассистент — экспериментальная функция</span>
-  </div>
-</main>
+</div>
 
 <script>
 var API_BASE  = 'https://chatbot.dev.ii4ki.ru/api';
 var sessionId = 'kad-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 
-var body   = document.getElementById('chat-body');
-var quick  = document.getElementById('quick');
-var form   = document.getElementById('chat-form');
-var input  = document.getElementById('chat-input');
-var sendB  = document.getElementById('chat-send');
-var sending = false;
+var stage   = document.getElementById('stage');
+var log     = document.getElementById('log');
+var form    = document.getElementById('form');
+var input   = document.getElementById('q');
+var send    = document.getElementById('send');
+var chips   = document.getElementById('chips');
 
-/* ---- Колонтитул: номер выпуска и дата ---- */
-(function(){
-  var now = new Date();
-  var months = ['января','февраля','марта','апреля','мая','июня','июля',
-                'августа','сентября','октября','ноября','декабря'];
-  document.getElementById('rh-date').textContent =
-    'Тверь · ' + now.getDate() + ' ' + months[now.getMonth()] + ' ' + now.getFullYear();
-  var issue = 1 + Math.floor((now - new Date(now.getFullYear(), 0, 0)) / 86400000);
-  document.getElementById('rh-issue').textContent = 'Выпуск № ' + issue;
-})();
+var started = false;
 
 function esc(s){
   return String(s).replace(/[&<>"']/g, function(c){
@@ -868,212 +335,160 @@ function esc(s){
 function md(s){
   return esc(s)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+    .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    .replace(/\n/g, '<br>');
 }
 
-function fmtDate(iso){
-  if (!iso) return '';
-  var p = iso.split('-');
-  if (p.length < 3) return iso;
-  var mm = ['янв','фев','мар','апр','мая','июн','июл','авг','сен','окт','ноя','дек'];
-  return p[2] + ' ' + (mm[parseInt(p[1],10)-1] || p[1]) + ' ' + p[0];
-}
-
-function srcBlock(src){
-  if (!src || !src.url) return '';
-  var kind = src.kind === 'blog'
-    ? 'Источник · блог' + (src.rubric ? ' · ' + src.rubric : '') + (src.date ? ' · ' + fmtDate(src.date) : '')
-    : 'Источник · раздел сайта';
-  return '<div class="src"><div class="src-kind">' + esc(kind) + '</div>' +
-         '<a href="' + esc(src.url) + '" target="_blank" rel="noopener">' +
-         esc(src.title || src.url) + '</a></div>';
-}
-
-function addSay(text, src){
-  var row = document.createElement('div');
-  row.className = 'say';
-  row.innerHTML = '<div class="say-label">Ассистент 2КАД</div>' + md(text) + srcBlock(src);
-  body.appendChild(row);
-  body.scrollTop = body.scrollHeight;
-  return row;
-}
-
-function addAsk(text){
-  var row = document.createElement('div');
-  row.className = 'ask';
-  row.textContent = text;
-  body.appendChild(row);
-  body.scrollTop = body.scrollHeight;
+function addTurn(text){
+  var wrap = document.createElement('div');
+  wrap.className = 'turn';
+  var q = document.createElement('p');
+  q.className = 'ask';
+  q.textContent = text;
+  wrap.appendChild(q);
+  log.appendChild(wrap);
+  log.scrollTop = log.scrollHeight;
+  return wrap;
 }
 
 function showTyping(){
-  var row = document.createElement('div');
-  row.className = 'say';
-  row.id = '__typing';
-  row.innerHTML = '<div class="say-label">Ассистент 2КАД</div>' +
-                  '<div class="typing"><i></i><i></i><i></i></div>';
-  body.appendChild(row);
-  body.scrollTop = body.scrollHeight;
-}
-function hideTyping(){
-  var t = document.getElementById('__typing');
-  if (t) t.remove();
+  var t = document.createElement('div');
+  t.className = 'turn';
+  t.innerHTML = '<div class="dots"><i></i><i></i><i></i></div>';
+  log.appendChild(t);
+  log.scrollTop = log.scrollHeight;
+  return t;
 }
 
-addSay('Здравствуйте. Я ассистент 2КАД — читаю базу знаний компании и блог: ' +
-       'услуги, регламенты, приказы, судебную практику, разборы участков. ' +
-       'Спросите про межевание, оформление построек, ЕГРН, ГПЗУ — отвечу ' +
-       'со ссылкой на материал.');
-
-var FALLBACK_Q = [
-  'Сколько стоит межевание?',
-  'Что такое ГПЗУ?',
-  'Гаражная амнистия — как оформить?',
-  'Как читать выписку из ЕГРН?'
-];
-
-function renderQuick(items){
-  quick.innerHTML = '';
-  (items || []).forEach(function(it){
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.textContent = it.title.length > 58 ? it.title.slice(0, 55) + '…' : it.title;
-    b.title = it.title;
-    b.addEventListener('click', function(){
-      input.value = it.title;
-      form.dispatchEvent(new Event('submit'));
-    });
-    quick.appendChild(b);
-  });
+function hideTyping(node){
+  if (node && node.parentNode) node.parentNode.removeChild(node);
 }
 
-function renderInset(items, total){
-  var list = document.getElementById('inset-list');
-  if (!items || !items.length){
-    list.innerHTML = '<div class="inset-item"><div class="inset-meta">Материалы загружаются…</div></div>';
-    return;
-  }
-  list.innerHTML = '';
-  items.forEach(function(it){
-    var a = document.createElement('a');
-    a.className = 'inset-item';
-    a.href = it.url;
-    a.target = '_blank';
-    a.rel = 'noopener';
-    a.innerHTML = '<div class="inset-meta">' + esc(it.rubric || 'Блог') +
-                  (it.date ? ' · ' + esc(fmtDate(it.date)) : '') + '</div>' +
-                  '<div class="inset-h">' + esc(it.title) + '</div>';
-    list.appendChild(a);
-  });
-  document.getElementById('inset-count').textContent =
-    'Блог 2КАД · ' + (total || items.length) + ' материалов';
-  var fp = document.getElementById('f-posts');
-  if (fp) fp.textContent = (total || items.length);
+function begin(){
+  if (started) return;
+  started = true;
+  stage.classList.add('is-chat');
+  input.focus();
 }
 
-fetch(API_BASE + '/recent-posts?limit=4')
-  .then(function(r){ return r.json(); })
-  .then(function(d){ renderInset(d.items, d.total_posts); })
-  .catch(function(){ renderInset([], 0); });
+function tooTechnical(text){
+  return /stall|fallback|ReadTimeout|Traceback|chunk|mistral|provider|httpx|NoneType|AttributeError|KeyError|\b500\b/i.test(text || '');
+}
 
-fetch(API_BASE + '/suggestions?limit=4')
-  .then(function(r){ return r.json(); })
-  .then(function(d){ renderQuick(d.items && d.items.length ? d.items : FALLBACK_Q); })
-  .catch(function(){ renderQuick(FALLBACK_Q); });
-
-form.addEventListener('submit', function(e){
-  e.preventDefault();
-  if (sending) return;
-  var text = input.value.trim();
+function ask(text){
+  text = (text || '').trim();
   if (!text) return;
-  sending = true;
-  sendB.disabled = true;
-  addAsk(text);
+
+  begin();
   input.value = '';
-  showTyping();
+  send.disabled = true;
+
+  var turn = addTurn(text);
+  var typing = showTyping();
 
   fetch(API_BASE + '/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ session_id: sessionId, message: text })
   })
-  .then(function(r){
-    if (!r.ok || !r.body) throw new Error('HTTP ' + r.status);
-    var reader = r.body.getReader();
-    var dec = new TextDecoder();
-    var buf = '';
-    var src = null;
-    var acc = '';
+  .then(function(r){ return r.body.getReader(); })
+  .then(function(reader){
+    var decoder = new TextDecoder('utf-8');
+    var buffer = '';
     var bubble = null;
+    var acc = '';
+    var failed = false;
+
+    function handle(ev){
+      if (ev.type === 'meta') return;
+      if (ev.type === 'content'){
+        if (!bubble){
+          hideTyping(typing);
+          bubble = document.createElement('p');
+          bubble.className = 'say';
+          turn.appendChild(bubble);
+        }
+        acc += ev.delta || '';
+        bubble.innerHTML = md(acc);
+        log.scrollTop = log.scrollHeight;
+      }
+      else if (ev.type === 'replace'){
+        acc = ev.text || '';
+        if (bubble) bubble.innerHTML = md(acc);
+      }
+      else if (ev.type === 'error'){
+        failed = true;
+      }
+      else if (ev.type === 'done'){
+        if (bubble && !acc.trim()){
+          bubble.innerHTML = md('Ответ не сформировался. Попробуйте переформулировать вопрос или позвоните менеджеру: +7 (4822) 41-57-68.');
+        }
+      }
+    }
 
     function pump(){
-      return reader.read().then(function(res){
-        if (res.done) { sending = false; sendB.disabled = false; return; }
-        buf += dec.decode(res.value, { stream: true });
-        var lines = buf.split('\n');
-        buf = lines.pop();
-        lines.forEach(function(line){
-          if (!line) return;
-          var ev;
-          try { ev = JSON.parse(line); } catch (err) { return; }
-
-          if (ev.type === 'meta'){
-            if (ev.page_url){
-              src = {
-                url: ev.page_url,
-                title: ev.page_title,
-                kind: ev.source_kind || 'page',
-                rubric: ev.source_rubric,
-                date: ev.source_date
-              };
-            }
-          }
-          else if (ev.type === 'content'){
-            if (!bubble){ hideTyping(); bubble = addSay('', src); }
-            acc += ev.delta;
-            bubble.innerHTML = '<div class="say-label">Ассистент 2КАД</div>' + md(acc) + srcBlock(src);
-            body.scrollTop = body.scrollHeight;
-          }
-          else if (ev.type === 'replace'){
-            acc = '';
-            if (bubble) bubble.innerHTML = '<div class="say-label">Ассистент 2КАД</div>';
-          }
-          else if (ev.type === 'error'){
-            hideTyping();
-            var raw = (ev.message || '');
-            var low = raw.toLowerCase();
-            var friendly = (low.indexOf('stall') < 0 && low.indexOf('fallback') < 0)
-              ? raw
-              : 'Не удалось подготовить ответ — сервис отвечает медленно. ' +
-                'Попробуйте ещё раз или позвоните +7 (4822) 41-57-68.';
-            if (!bubble) bubble = addSay(friendly, src);
-            else bubble.innerHTML = '<div class="say-label">Ассистент 2КАД</div>' + esc(friendly);
-            sending = false;
-            sendB.disabled = false;
-          }
+      return reader.read().then(function(result){
+        if (result.done) return;
+        buffer += decoder.decode(result.value, { stream: true });
+        var parts = buffer.split('\n');
+        buffer = parts.pop();
+        parts.forEach(function(line){
+          var s = line.trim();
+          if (!s) return;
+          try { handle(JSON.parse(s)); } catch (e) { /* не JSON — пропускаем */ }
         });
         return pump();
       });
     }
 
-    pump().catch(function(err){
-      hideTyping();
-      if (!bubble) addSay('Не удалось получить ответ: ' + esc(err.message));
-      sending = false;
-      sendB.disabled = false;
+    return pump().then(function(){
+      hideTyping(typing);
+      if (!bubble){
+        var p = document.createElement('p');
+        p.className = 'say';
+        p.innerHTML = md(
+          failed || !acc.trim()
+            ? 'Не удалось подготовить ответ. Уточните вопрос или позвоните менеджеру: +7 (4822) 41-57-68.'
+            : acc
+        );
+        turn.appendChild(p);
+      } else if (tooTechnical(acc)){
+        bubble.innerHTML = md(
+          'Ответ не сформировался. Попробуйте переформулировать вопрос или позвоните менеджеру: +7 (4822) 41-57-68.'
+        );
+      }
+      log.scrollTop = log.scrollHeight;
     });
   })
-  .catch(function(err){
-    hideTyping();
-    addSay('Нет связи с сервисом. Позвоните +7 (4822) 41-57-68.');
-    sending = false;
-    sendB.disabled = false;
+  .catch(function(){
+    hideTyping(typing);
+    var p = document.createElement('p');
+    p.className = 'say';
+    p.textContent = 'Нет связи с ассистентом. Проверьте соединение или позвоните менеджеру: +7 (4822) 41-57-68.';
+    turn.appendChild(p);
+  })
+  .then(function(){
+    send.disabled = !input.value.trim();
+    input.focus();
   });
+}
+
+form.addEventListener('submit', function(e){
+  e.preventDefault();
+  ask(input.value);
 });
 
-input.addEventListener('keydown', function(e){
-  if (e.key === 'Escape') input.value = '';
+input.addEventListener('input', function(){
+  send.disabled = !input.value.trim();
 });
+
+chips.addEventListener('click', function(e){
+  var chip = e.target.closest('.chip');
+  if (!chip) return;
+  ask(chip.textContent);
+});
+
+input.focus();
 </script>
 </body>
 </html>
