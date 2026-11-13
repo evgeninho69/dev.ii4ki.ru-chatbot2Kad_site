@@ -112,6 +112,45 @@ def llm_status() -> Dict:
         return {"configured": True, "error": str(e)[:200]}
 
 
+def grounded_answer(question: str, decision, phone: str) -> str:
+    """Гарантированный ответ по найденному материалу — без LLM.
+
+    Используется, когда провайдер LLM завис или недоступен: выдержки
+    берутся ДОСЛОВНО из статьи блога или страницы услуги, поэтому ответ
+    остаётся фактическим, проверяемым и появляется мгновенно.
+    """
+    doc = decision.page or {}
+    idx = get_index()
+    title = doc.get("title") or "материал"
+    url = doc.get("url", "")
+    passages = idx.best_passages(question, doc, max_sentences=4, max_chars=900)
+
+    tail = f"\n\nПодробнее: [{title}]({url})"
+    rubric = (doc.get("category_names") or [None])[0]
+    date = doc.get("date")
+    if rubric:
+        tail += f" — {rubric}"
+        if date:
+            tail += f", {date}"
+    if decision.mode == "pricing":
+        calc_url = idx.data.get("calculator_url", "https://2kad.ru/kalkulyator/")
+        tail += (
+            f"\n\nПосчитайте предварительную стоимость в калькуляторе: "
+            f"{calc_url}\n"
+            f"Точная стоимость определяется после изучения документов на объект "
+            f"и согласования объёма работ. Менеджер: {phone}."
+        )
+    elif not passages:
+        tail += f"\n\nЕсли нужна консультация — позвоните {phone}."
+
+    if not passages:
+        passages = (
+            f"По теме «{title}» подробная информация собрана в материале "
+            "на сайте."
+        )
+    return passages + tail
+
+
 # ---------- FastAPI ----------
 app = FastAPI(
     title="2KAD Chatbot API",
@@ -315,14 +354,12 @@ async def chat(req: ChatRequest):
                                 "text": "",
                             }, ensure_ascii=False).encode() + b"\n"
                         if decision.page:
-                            page_url = decision.page["url"]
-                            page_title = decision.page.get("title", "страница")
                             phone = get_index().data.get("phone", "+7 (4822) 41-57-68")
-                            fallback_text = (
-                                f"К сожалению, не удалось подготовить развёрнутый ответ. "
-                                f"Посмотрите страницу [{page_title}]({page_url}) — "
-                                f"там подробная информация. "
-                                f"Если нужна консультация — позвоните {phone}."
+                            # Ответ строится из самого материала (выдержки из
+                            # найденной статьи/страницы) — фактично и без
+                            # технических формулировок.
+                            fallback_text = grounded_answer(
+                                req.message, decision, phone
                             )
                             # Отдаём как обычный content-чанк + done,
                             # чтобы виджет отобразил это как нормальное сообщение.
@@ -347,16 +384,38 @@ async def chat(req: ChatRequest):
                                 "partial_before": had_partial,
                             })
                             return
-                        # Страница не найдена — отдаём friendly error
-                        # (НЕ технический текст от LLM).
+                        # Страница не найдена — вместо технической ошибки
+                        # даём понятный ответ с контактами и ссылкой на сайт.
+                        phone = get_index().data.get("phone", "+7 (4822) 41-57-68")
+                        main_url = get_index().data.get(
+                            "main_url", "https://2kad.ru/"
+                        )
+                        fallback_text = (
+                            "Уточните, пожалуйста, детали — так я подберу нужный "
+                            "материал. По кадастровым работам, проектированию и "
+                            f"инженерным изысканиям в Твери и области — {main_url}. "
+                            f"Менеджер: {phone}."
+                        )
                         yield json.dumps({
-                            "type": "error",
-                            "message": (
-                                "Не удалось подготовить ответ. "
-                                "Попробуйте позже или позвоните "
-                                "+7 (4822) 41-57-68."
-                            ),
+                            "type": "content",
+                            "delta": fallback_text,
                         }, ensure_ascii=False).encode() + b"\n"
+                        history.append({"role": "user", "content": req.message})
+                        history.append({"role": "assistant", "content": fallback_text})
+                        yield json.dumps({
+                            "type": "done",
+                            "usage": usage,
+                        }, ensure_ascii=False).encode() + b"\n"
+                        push_log({
+                            "session_id": sid[:8],
+                            "mode": decision.mode,
+                            "q": req.message[:120],
+                            "reply_len": len(fallback_text),
+                            "usage": usage,
+                            "page": None,
+                            "fallback": True,
+                            "partial_before": had_partial,
+                        })
                         return
                     elif ev["type"] == "done":
                         break

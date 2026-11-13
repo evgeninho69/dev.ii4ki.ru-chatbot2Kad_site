@@ -210,6 +210,60 @@ class SiteIndex:
                 return p
         return None
 
+    def best_passages(self, query: str, doc: Dict, max_sentences: int = 4,
+                      max_chars: int = 800) -> str:
+        """Извлекательные выдержки из документа по запросу.
+
+        Гарантированный ответ, когда LLM недоступен или провайдер завис:
+        текст берётся ДОСЛОВНО из найденного материала (страницы услуги или
+        статьи блога) — ничего не выдумывается, только выбираются наиболее
+        релевантные предложения и сохраняется их исходный порядок.
+        """
+        content = (doc.get("content") or "").strip()
+        if not content:
+            return ""
+
+        raw = re.split(r"(?<=[.!?…])\s+|\n+", content)
+        sentences = []
+        for s in raw:
+            s = s.strip(" \t•·-—")
+            words = s.split()
+            # отбрасываем заголовки, вопросы из FAQ и короткие огрызки
+            if len(s) <= 40 or len(words) < 5:
+                continue
+            if s.endswith("?"):
+                continue
+            sentences.append(s)
+        if not sentences:
+            return content[:max_chars].strip()
+
+        q_tokens = set(normalize_query(query))
+        scored = []
+        for i, s in enumerate(sentences):
+            toks = set(tokenize(s))
+            if not toks:
+                continue
+            hit = sum(1 for t in toks if t in q_tokens)
+            if hit == 0:
+                continue
+            density = hit / max(1, len(toks))
+            # конкретика (числа, даты, номера документов, цены) ценится выше
+            concrete = 1.0 if re.search(r"\d|₽|%", s) else 0.0
+            score = hit + 2.0 * density + 0.5 * concrete
+            scored.append((score, i, s))
+
+        if scored:
+            top = sorted(scored, key=lambda x: (-x[0], x[1]))[:max_sentences]
+            picked = sorted(top, key=lambda x: x[1])
+        else:
+            # совпадений нет — берём начало материала
+            picked = list(enumerate(sentences))[:max_sentences]
+
+        out = " ".join(s for _, _, s in picked).strip()
+        if len(out) > max_chars:
+            out = out[:max_chars].rsplit(" ", 1)[0] + "…"
+        return out
+
     def recent_posts(self, limit: int = 6) -> List[Dict]:
         """Свежие посты блога — для «Что нового» на странице ассистента."""
         posts = [p for p in self.pages if p.get("type") == "post"]

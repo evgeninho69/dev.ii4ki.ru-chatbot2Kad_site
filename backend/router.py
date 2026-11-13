@@ -13,16 +13,31 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from prompts import (
-    BLOG_PROMPT, INFO_PROMPT, NO_ANSWER_PROMPT, PRICE_KEYWORDS, PRICING_PROMPT,
+    BLOG_PROMPT, INFO_PROMPT, NO_ANSWER_PROMPT, PRICE_STEMS, PRICE_WORDS,
+    PRICING_PROMPT,
 )
 from search import SiteIndex
 
 
+def _price_pattern() -> str:
+    """Регулярка ценовых вопросов.
+
+    Границы слов ставятся аккуратно: стемы («цен») ищутся по началу слова,
+    а «почем» — только как целое слово, иначе ловило бы «почему».
+    """
+    parts = []
+    for k in PRICE_STEMS:
+        left = r"\b" if k[:1].isalnum() else ""
+        parts.append(left + re.escape(k))
+    for k in PRICE_WORDS:
+        left = r"\b" if k[:1].isalnum() else ""
+        right = r"\b" if k[-1:].isalnum() else ""
+        parts.append(left + re.escape(k) + right)
+    return "(?:" + "|".join(parts) + ")"
+
+
 # Веса для эвристики ценового вопроса
-PRICE_RE = re.compile(
-    r"\b(" + "|".join(re.escape(k) for k in PRICE_KEYWORDS) + r")",
-    re.IGNORECASE,
-)
+PRICE_RE = re.compile(_price_pattern(), re.IGNORECASE)
 
 
 @dataclass

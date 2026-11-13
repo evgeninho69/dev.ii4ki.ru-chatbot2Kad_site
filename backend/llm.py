@@ -47,13 +47,19 @@ import httpx
 
 
 # Сколько секунд ждать следующий chunk. Каждый полученный chunk сбрасывает таймер.
-STALL_TIMEOUT_S = 15.0
+STALL_TIMEOUT_S = 10.0
 
 # Общий бюджет времени на всю цепочку провайдеров (включая fallback).
 # Нужен, чтобы ответ гарантированно ушёл клиенту: прокси перед доменом
 # обрывает соединение примерно на 60-й секунде, и без жёсткого дедлайна
 # пользователь видел бы пустой чат.
-TOTAL_BUDGET_S = 40.0
+TOTAL_BUDGET_S = 20.0
+
+# Если провайдер два раза подряд завис — временно отключаем LLM и отдаём
+# гарантированный ответ из материалов базы знаний (см. app.grounded_answer).
+# Через cooldown пробуем снова: если поток прошёл — счётчик сбрасывается.
+DEGRADED_COOLDOWN_S = 300.0
+DEGRADED_AFTER_FAILURES = 2
 
 # Описание провайдеров. Поля:
 #   key_env / base_env / model_env — имена переменных окружения
@@ -173,6 +179,11 @@ class AnyModelClient:
         self.chain = chain
         self._idx = 0
 
+        # Состояние «деградации»: провайдер завис — перестаём тратить время
+        # пользователя и сразу отдаём ответ из базы знаний.
+        self._fail_streak = 0
+        self._degraded_until = 0.0
+
         # Атрибуты для backward-compat (код, который смотрит на .model / .api_key).
         self.api_key = chain[0]["api_key"]
         self.model = chain[0]["model"]
@@ -205,7 +216,23 @@ class AnyModelClient:
         fallback: bool = True,
     ) -> AsyncGenerator[Dict, None]:
         """Стрим ответ от LLM с stall-detection и переключением провайдера."""
+        # Каждый запрос стартует с основной модели: после срабатывания
+        # fallback индекс цепочки не должен «залипать» на запасной.
+        self._idx = 0
+
+        # Деградация: провайдер нестабилен — не тратим время пользователя.
+        if time.monotonic() < self._degraded_until:
+            yield {
+                "type": "error",
+                "message": (
+                    "degraded: провайдер временно нестабилен, "
+                    "ответ формируется по базе знаний"
+                ),
+            }
+            return
+
         deadline = time.monotonic() + TOTAL_BUDGET_S
+        ok = False
         async for ev in self._stream_once(
             messages, model=model,
             max_tokens=max_tokens, temperature=temperature,
@@ -213,7 +240,16 @@ class AnyModelClient:
             tried_fallback=[],
             deadline=deadline,
         ):
+            if ev["type"] == "done":
+                ok = True
+            elif ev["type"] == "error":
+                self._fail_streak += 1
+                if self._fail_streak >= DEGRADED_AFTER_FAILURES:
+                    self._degraded_until = time.monotonic() + DEGRADED_COOLDOWN_S
             yield ev
+        if ok:
+            # Поток прошёл — провайдер считается живым.
+            self._fail_streak = 0
 
     async def _stream_once(
         self,
