@@ -201,19 +201,37 @@ def grounded_answer(question: str, decision, phone: str) -> str:
     return passages + tail
 
 
+# Финальная строка «Подробнее: [название](ссылка)» — её формирует система.
+LINK_LINE_RE = re.compile(
+    r"^[ \t]*(?:\*\*)?[ \t]*Подробнее\b[^\n]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def strip_link_lines(text: str) -> str:
+    """Убирает строки «Подробнее: …» — финальную ссылку добавляет система."""
+    if not text:
+        return ""
+    return LINK_LINE_RE.sub("", text)
+
+
 def ensure_link(text: str, decision) -> str:
     """Гарантирует, что ответ заканчивается ссылкой на материал 2КАД.
 
-    Правило «в конце ответа — нужная услуга или нужная статья» соблюдается
-    даже если LLM про ссылку забыл.
+    Финальную строку формирует система, а не LLM: модель регулярно брала
+    название материала из одного документа и адрес из другого (например,
+    «Подробнее: [С 1 января 2026…](https://2kad.ru/blog/)»). Поэтому все
+    строки «Подробнее: …» из ответа удаляются, а в конец добавляется ровно
+    одна ссылка — та, что выбрал роутер.
     """
     if not decision.link_url:
         return text
-    if decision.link_url in text:
-        return text
     title = decision.link_title or "материал 2КАД"
-    link = f"\n\nПодробнее: [{title}]({decision.link_url})"
-    return (text.rstrip() + link) if text.strip() else link.lstrip()
+    body = strip_link_lines(text or "").strip()
+    link = f"Подробнее: [{title}]({decision.link_url})"
+    if not body:
+        return link
+    return f"{body}\n\n{link}"
 
 
 # ---------- FastAPI ----------
@@ -385,13 +403,21 @@ async def chat(req: ChatRequest):
             }, ensure_ascii=False).encode() + b"\n"
 
             try:
+                pending = ""
+                TAIL = 320
                 async for ev in llm.chat_stream(messages):
                     if ev["type"] == "content":
+                        delta = ev["delta"]
                         full += ev["delta"]
-                        yield json.dumps({
-                            "type": "content",
-                            "delta": ev["delta"],
-                        }, ensure_ascii=False).encode() + b"\n"
+                        # Хвост потока придерживаем: в нём находится финальная
+                        # ссылка, которую формирует система, а не модель.
+                        pending += delta
+                        if len(pending) > TAIL * 2:
+                            head, pending = pending[:-TAIL], pending[-TAIL:]
+                            yield json.dumps({
+                                "type": "content",
+                                "delta": head,
+                            }, ensure_ascii=False).encode() + b"\n"
                     elif ev["type"] == "reasoning":
                         yield json.dumps({
                             "type": "reasoning",
@@ -490,6 +516,21 @@ async def chat(req: ChatRequest):
                         return
                     elif ev["type"] == "done":
                         break
+
+                # Хвост ответа: убираем «Подробнее: …», которые могла
+                # написать модель, и добавляем ровно одну правильную ссылку.
+                tail = strip_link_lines(pending).strip()
+                if tail:
+                    yield json.dumps({
+                        "type": "content",
+                        "delta": tail,
+                    }, ensure_ascii=False).encode() + b"\n"
+                link_line = ensure_link("", decision)
+                if link_line:
+                    yield json.dumps({
+                        "type": "content",
+                        "delta": "\n\n" + link_line,
+                    }, ensure_ascii=False).encode() + b"\n"
 
                 # Правило «ответ заканчивается ссылкой на материал 2КАД»
                 # соблюдается даже если LLM про ссылку забыл.

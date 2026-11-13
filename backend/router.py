@@ -20,8 +20,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from prompts import (
-    ARTICLE_PROMPT, LAW_PROMPT, NO_ANSWER_PROMPT, PRICE_STEMS, PRICE_WORDS,
-    PRICING_PROMPT, SERVICE_PROMPT, TOOL_PROMPT,
+    ARTICLE_PROMPT, LAW_PROMPT, NO_ANSWER_PROMPT, PRICE_MARKERS,
+    PRICE_STEMS, PRICE_WEAK_STEMS, PRICE_WORDS, PRICING_PROMPT, SERVICE_PROMPT,
+    TOOL_PROMPT,
 )
 from search import LAW_HINTS, SiteIndex
 
@@ -39,17 +40,17 @@ BAD_LINK_SLUGS = {
 }
 
 
-def _price_pattern() -> str:
+def _price_pattern(stems: List[str], words: List[str]) -> str:
     """Регулярка ценовых вопросов.
 
     Границы слов ставятся аккуратно: стемы («цен») ищутся по началу слова,
     а «почем» — только как целое слово, иначе ловило бы «почему».
     """
     parts = []
-    for k in PRICE_STEMS:
+    for k in stems:
         left = r"\b" if k[:1].isalnum() else ""
         parts.append(left + re.escape(k))
-    for k in PRICE_WORDS:
+    for k in words:
         left = r"\b" if k[:1].isalnum() else ""
         right = r"\b" if k[-1:].isalnum() else ""
         parts.append(left + re.escape(k) + right)
@@ -57,7 +58,12 @@ def _price_pattern() -> str:
 
 
 # Веса для эвристики ценового вопроса
-PRICE_RE = re.compile(_price_pattern(), re.IGNORECASE)
+PRICE_RE = re.compile(_price_pattern(PRICE_STEMS, PRICE_WORDS), re.IGNORECASE)
+# Слабые слова («стоимость», «рассчита») держат в ценовом режиме только
+# вместе с вопросительным маркером: иначе «как оспорить кадастровую
+# стоимость» уходило в ответ с ценами.
+PRICE_WEAK_RE = re.compile(_price_pattern(PRICE_WEAK_STEMS, []), re.IGNORECASE)
+PRICE_MARKER_RE = re.compile(_price_pattern(PRICE_MARKERS, []), re.IGNORECASE)
 
 
 @dataclass
@@ -89,7 +95,11 @@ class QueryRouter:
         }
 
     def is_pricing_question(self, q: str) -> bool:
-        return bool(PRICE_RE.search(q))
+        if PRICE_RE.search(q):
+            return True
+        if PRICE_WEAK_RE.search(q) and PRICE_MARKER_RE.search(q):
+            return True
+        return False
 
     def _truncate(self, text: str, max_chars: int = 1800) -> str:
         if not text:
@@ -112,6 +122,23 @@ class QueryRouter:
         if not m:
             return ""
         return re.sub(r"\s+", "", m.group(1)).upper().replace("P/", "П/")
+
+    def _extract_act_from_doc(self, doc: Optional[Dict]) -> str:
+        """Номер акта, названный на странице 2КАД (например, П/0592).
+
+        Приоритет у приказов Росреестра («П/xxxx»): именно они регулируют
+        кадастровые работы, а не федеральные законы.
+        """
+        if not doc:
+            return ""
+        hay = f"{doc.get('title', '')}\n{doc.get('content', '')}"
+        fallback = ""
+        for m in ACT_RE.finditer(hay):
+            act = re.sub(r"\s+", "", m.group(1)).upper().replace("P/", "П/")
+            if act.startswith("П/"):
+                return act
+            fallback = fallback or act
+        return fallback
 
     def _linkable(self, doc: Optional[Dict]) -> bool:
         """Подходит ли документ в качестве финальной ссылки на материал 2КАД."""
@@ -153,6 +180,8 @@ class QueryRouter:
         act = self._extract_act(q)
         law_hint = bool(LAW_HINTS.search(q))
         is_price = self.is_pricing_question(q)
+        # Материал 2КАД по карте тем — он задаёт финальную ссылку.
+        topic_doc = self.idx.topic_doc(q)
 
         # ---------- 1. Инструмент из «Полезного» ----------
         # Инструмент важнее калькулятора-как-темы: если человек прямо
@@ -162,7 +191,7 @@ class QueryRouter:
             r"(посчита|рассчита|калькулятор|провер|оцени|вычисли|какой риск|"
             r"можно ли проверить|нужно проверить)",
             q, re.IGNORECASE))
-        if tool and s_tool >= 12.0 and (wants_action or not is_price):
+        if tool and s_tool >= 12.0 and (wants_action or s_tool >= 18.0):
             tool_ctx = self._esc(self._truncate(tool.get("content", ""), 900))
             link = self._link_fields(tool, meta)
             prompt = TOOL_PROMPT.format(
@@ -191,7 +220,7 @@ class QueryRouter:
                 calculator.get("excerpt", "") or calc_text, 900))
             service_ctx = self._esc(self._truncate(
                 page.get("content", ""), 1200)) if page else ""
-            link_doc = self._best_link([page]) or calculator
+            link_doc = self._best_link([topic_doc, page]) or calculator
             link = self._link_fields(link_doc, meta)
             prompt = PRICING_PROMPT.format(
                 price_context=self.idx.price_context(),
@@ -222,12 +251,15 @@ class QueryRouter:
                 if act.lower() in hay.lower():
                     act_doc = law
             if act_doc or related:
-                link_doc = self._best_link([related, page, post])
+                link_doc = self._best_link([topic_doc, related, page, post])
                 link = self._link_fields(link_doc, meta)
                 related_ctx = ""
                 if related:
                     related_ctx = self._esc(self._truncate(
                         related.get("content", ""), 1600))
+                elif topic_doc:
+                    related_ctx = self._esc(self._truncate(
+                        topic_doc.get("content", ""), 1600))
                 else:
                     related_ctx = "Материал 2КАД по этой теме не найден."
                 law_ctx = self._esc(self._truncate(
@@ -261,7 +293,17 @@ class QueryRouter:
 
         # ---------- 4. Законодательный вопрос по маркерам ----------
         if law_hint and law and s_law >= max(4.0, 0.6 * s_post):
-            link_doc = self._best_link([post, page])
+            # Если страница 2КАД по теме называет конкретный приказ —
+            # берём именно его, а не документ, который нашёлся по совпадению
+            # слов. Например, «Требования к межевому плану» — это П/0592.
+            act_doc = None
+            topic_act = self._extract_act_from_doc(topic_doc)
+            if topic_act:
+                act_doc = self.idx.find_law_by_act(topic_act)
+            if act_doc is None:
+                act_doc = law
+
+            link_doc = self._best_link([topic_doc, post, page])
             link = self._link_fields(link_doc, meta)
             related_ctx = ""
             if link_doc:
@@ -269,32 +311,34 @@ class QueryRouter:
                     link_doc.get("content", ""), 1400))
             else:
                 related_ctx = "Материал 2КАД по этой теме не найден."
-            law_cats = ", ".join(law.get("category_names") or []) or "Нормативные акты"
+            law_cats = ", ".join(
+                (act_doc or {}).get("category_names") or []) or "Нормативные акты"
             prompt = LAW_PROMPT.format(
-                law_title=self._esc(law.get("title", "")),
-                law_date=law.get("date", ""),
+                law_title=self._esc((act_doc or {}).get("title", "")),
+                law_date=(act_doc or {}).get("date", ""),
                 law_category=self._esc(law_cats),
-                law_content=self._esc(self._truncate(law.get("content", ""), 1800)),
+                law_content=self._esc(self._truncate(
+                    (act_doc or {}).get("content", ""), 1800)),
                 related_context=related_ctx,
                 phone=meta["phone"],
                 **link,
             )
             return RoutingDecision(
                 mode="law",
-                page=law,
+                page=act_doc,
                 system_prompt=prompt,
-                found_title=law.get("title", ""),
-                found_url=law.get("url", ""),
+                found_title=(act_doc or {}).get("title", ""),
+                found_url=(act_doc or {}).get("url", ""),
                 source_kind="law",
                 link_doc=link_doc,
                 link_title=link["link_title"],
                 link_url=link["link_url"],
-                law_doc=law,
+                law_doc=act_doc,
             )
 
         # ---------- 5. Статья блога ----------
         if post and s_post >= s_page:
-            link_doc = self._best_link([post]) or post
+            link_doc = self._best_link([post, topic_doc]) or post
             link = self._link_fields(link_doc, meta)
             cats = ", ".join(post.get("category_names") or []) or "Блог"
             prompt = ARTICLE_PROMPT.format(
@@ -320,7 +364,7 @@ class QueryRouter:
 
         # ---------- 6. Страница услуги ----------
         if page:
-            link_doc = self._best_link([page]) or page
+            link_doc = self._best_link([topic_doc, page]) or page
             link = self._link_fields(link_doc, meta)
             prompt = SERVICE_PROMPT.format(
                 page_title=self._esc(page.get("title", "")),

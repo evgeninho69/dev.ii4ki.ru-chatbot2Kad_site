@@ -21,8 +21,46 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from topics import match_topic
+
 
 WORD_RE = re.compile(r"[а-яёa-z0-9]+", re.IGNORECASE)
+
+# Окончания, которые отбрасываем при стемминге. Без этого «межевые планы» из
+# вопроса не находили документ, где написано «межевого плана», и ассистент
+# отвечал не про тот приказ. Список — только частые падежные/числовые формы,
+# корни короче 4 букв не трогаем.
+RU_ENDINGS = (
+    "ами", "ями", "остью", "ости", "ость", "ыми", "ими", "ого", "его",
+    "ому", "ему", "ых", "их", "ая", "яя", "ое", "ее", "ые", "ие", "ий",
+    "ый", "ам", "ям", "ах", "ях", "ов", "ев", "ой", "ей", "ем", "ом",
+    "ую", "юю", "ью", "ию", "ки", "ок",
+)
+RU_ENDING_ONE = "аяуюыиоеь"
+
+
+def stem_ru(token: str) -> str:
+    """Очень грубый стеммер русского языка.
+
+    Цель — не морфология, а совпадение падежных форм: «межевые планы»,
+    «межевого плана», «межевым планом» должны находить один документ.
+    """
+    if len(token) < 5:
+        return token
+    for suf in RU_ENDINGS:
+        if token.endswith(suf):
+            stem = token[: -len(suf)]
+            return stem if len(stem) >= 4 else token
+    if token[-1] in RU_ENDING_ONE:
+        stem = token[:-1]
+        if len(stem) >= 4:
+            # «участка» → «участк» → «участ»
+            if stem.endswith("к") and len(stem) - 1 >= 4:
+                return stem[:-1]
+            return stem
+    return token
+
+
 STOP = set("""
 и в на на у не что это как но он она они мы вы от до за по для из с о
 а то есть во быть был была были был был быть да нет уже еще или если
@@ -65,7 +103,7 @@ LAW_CATS_RELEVANT = (
 def tokenize(text: str) -> List[str]:
     text = text.lower()
     tokens = WORD_RE.findall(text)
-    return [t for t in tokens if t not in STOP and len(t) > 1]
+    return [stem_ru(t) for t in tokens if t not in STOP and len(t) > 1]
 
 
 def normalize_query(text: str) -> List[str]:
@@ -104,6 +142,7 @@ class SiteIndex:
         self._tokens: Dict[str, List[str]] = {}
         self._title_tokens: Dict[str, List[str]] = {}
         self._slug_tokens: Dict[str, List[str]] = {}
+        self._excerpt_tokens: Dict[str, List[str]] = {}
         self._doc_freq: Dict[str, int] = {}
         self._doc_len: Dict[str, int] = {}
         self._price_rows: Optional[List[Dict]] = None
@@ -115,10 +154,15 @@ class SiteIndex:
             content_tokens = tokenize(p.get("content", ""))
             title_tokens = tokenize(p.get("title", ""))
             slug_tokens = (p.get("slug") or "").replace("-", " ").split()
+            # Предмет документа (excerpt) — у нормативных актов это точная
+            # формулировка: «требования к подготовке межевого плана». Без
+            # него поиск по «межевые планы» уводил на посторонние приказы.
+            excerpt_tokens = tokenize(p.get("excerpt", "") or "")
             pid = str(p["id"])
             self._tokens[pid] = content_tokens
             self._title_tokens[pid] = title_tokens
             self._slug_tokens[pid] = slug_tokens
+            self._excerpt_tokens[pid] = excerpt_tokens
             self._doc_len[pid] = len(content_tokens)
             self._doc_type[pid] = p.get("type", "page")
 
@@ -154,6 +198,9 @@ class SiteIndex:
         slug_tf: Dict[str, int] = {}
         for t in self._slug_tokens[pid]:
             slug_tf[t] = slug_tf.get(t, 0) + 1
+        excerpt_tf: Dict[str, int] = {}
+        for t in self._excerpt_tokens.get(pid, []):
+            excerpt_tf[t] = excerpt_tf.get(t, 0) + 1
 
         score = 0.0
         for qt in query_tokens:
@@ -164,14 +211,21 @@ class SiteIndex:
             tf_d = tf.get(qt, 0)
             tf_t = title_tf.get(qt, 0)
             tf_s = slug_tf.get(qt, 0)
+            tf_e = excerpt_tf.get(qt, 0)
 
             num = tf_d * (k1 + 1)
             den = tf_d + k1 * (1 - b + b * doc_len / self._avg_dl)
             score += idf * num / den if den else 0
 
-            # бусты: заголовок и slug
-            score += tf_t * 3.0
-            score += tf_s * 2.0
+            # Поля: заголовок, предмет документа, slug. С насыщением —
+            # иначе длинный «предмет» с двадцатью повторами слова «план»
+            # перевешивал документ, который как раз про эту тему.
+            if tf_t:
+                score += idf * (tf_t * 3.0) / (tf_t + 1.0)
+            if tf_e:
+                score += idf * (tf_e * 2.5) / (tf_e + 1.0)
+            if tf_s:
+                score += idf * (tf_s * 2.0) / (tf_s + 1.0)
 
         return score
 
@@ -208,6 +262,34 @@ class SiteIndex:
                 return 4.0
         return 0.0
 
+    def _phrase_bonus(self, q_tokens: List[str], pid: str) -> float:
+        """Бонус за совпадение фразы: соседние слова вопроса подряд в тексте.
+
+        BM25 не учитывает порядок слов, поэтому документ, где «межевого плана»
+        упоминается десять раз, обгонял приказ, который как раз утверждает
+        требования к межевому плану. Фраза в «предмете» документа ценится
+        выше, чем в теле.
+        """
+        if len(q_tokens) < 2:
+            return 0.0
+        pairs = {(a, b) for a, b in zip(q_tokens, q_tokens[1:]) if a != b}
+        if not pairs:
+            return 0.0
+
+        def hits_in(seq: List[str]) -> int:
+            n = 0
+            prev = None
+            for t in seq:
+                if prev is not None and (prev, t) in pairs:
+                    n += 1
+                prev = t
+            return n
+
+        body = hits_in(self._tokens.get(pid, []))
+        subject = hits_in(self._excerpt_tokens.get(pid, []))
+        title = hits_in(self._title_tokens.get(pid, []))
+        return min(body, 3) * 0.8 + min(subject, 2) * 2.5 + min(title, 2) * 1.5
+
     # ---------------- публичное ----------------
     def search(self, query: str, top_k: int = 3,
                only: Optional[str] = None) -> List[Tuple[Dict, float]]:
@@ -230,7 +312,14 @@ class SiteIndex:
             if s > 0:
                 scored.append((p, s))
         scored.sort(key=lambda x: -x[1])
-        return scored[:top_k]
+        # Пересчитываем с бонусом за фразу только верхние кандидаты —
+        # полный проход по всем документам не нужен и стоил бы времени.
+        pool = scored[: max(top_k * 10, 150)]
+        if len(pool) > 1:
+            for i, (p, s) in enumerate(pool):
+                pool[i] = (p, s + self._phrase_bonus(q_tokens, str(p["id"])))
+            pool.sort(key=lambda x: -x[1])
+        return pool[:top_k]
 
     def top(self, query: str, only: str,
             min_score: float = 1.5) -> Tuple[Optional[Dict], float]:
@@ -259,6 +348,22 @@ class SiteIndex:
         """Инструмент из «Полезного», если вопрос про него."""
         doc, _ = self.top(query, "tool", min_score=2.0)
         return doc
+
+    def topic_doc(self, query: str) -> Optional[Dict]:
+        """Материал 2КАД по карте тем (topics.py).
+
+        Карта важнее поиска: она даёт предсказуемую финальную ссылку на нужную
+        услугу или нужную статью. Если тема в карте не описана — берём None
+        и работает обычный поиск по базе знаний.
+        """
+        tokens = [stem_ru(t) for t in WORD_RE.findall((query or "").lower())]
+        topic = match_topic(tokens)
+        if not topic:
+            return None
+        doc = self.get(topic["slug"])
+        if doc and doc.get("type") == "page":
+            return doc
+        return None
 
     def find_by_act(self, act: str) -> Optional[Dict]:
         """Статья 2КАД или страница услуги, где упоминается конкретный акт
