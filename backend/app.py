@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -27,6 +28,7 @@ from pydantic import BaseModel, Field
 from llm import AnyModelClient
 from router import QueryRouter
 from search import SiteIndex
+from thinking import ThinkingCaptions, fallback_captions, pick_scene
 
 # ---------- logging ----------
 logging.basicConfig(
@@ -55,6 +57,24 @@ def push_log(record: dict):
 _site_index: Optional[SiteIndex] = None
 _router: Optional[QueryRouter] = None
 _llm: Optional[AnyModelClient] = None
+_thinking: Optional[ThinkingCaptions] = None
+
+
+def get_thinking() -> ThinkingCaptions:
+    """Генератор подписей «размышления».
+
+    Отдельный LLM-клиент: у AnyModelClient своё состояние цепочки провайдеров
+    (_idx), и общий клиент с потоком ответа приводил бы к путанице при
+    переключении на резервного провайдера.
+    """
+    global _thinking
+    if _thinking is None:
+        try:
+            _thinking = ThinkingCaptions(llm=AnyModelClient())
+        except Exception as e:  # ключей нет — подписи пойдут из заготовок
+            log.warning(f"thinking llm unavailable: {e}")
+            _thinking = ThinkingCaptions(llm=None)
+    return _thinking
 
 
 def get_index() -> SiteIndex:
@@ -437,6 +457,9 @@ async def chat(req: ChatRequest):
 
     llm = get_llm()
 
+    # Сцена анимации «размышления» — по теме вопроса, без обращения к модели.
+    scene = pick_scene(req.message, decision.mode)
+
     if req.stream:
         async def stream_resp() -> AsyncGenerator[bytes, None]:
             full = ""
@@ -460,6 +483,31 @@ async def chat(req: ChatRequest):
                 "link_title": decision.link_title or None,
             }, ensure_ascii=False).encode() + b"\n"
 
+            # Подписи «размышления» считаются ПАРАЛЛЕЛЬНО с ответом:
+            # отдельная задача, отдельный LLM-клиент. Ждём их только перед
+            # первым фрагментом текста — к этому моменту они обычно уже
+            # готовы, и ответ не задерживается.
+            cap_task = asyncio.create_task(
+                get_thinking().generate(req.message, decision.mode, scene)
+            )
+            captions_sent = False
+
+            async def emit_captions():
+                """Отдаёт событие thinking с подписями (один раз)."""
+                nonlocal captions_sent
+                if captions_sent:
+                    return
+                captions_sent = True
+                try:
+                    caps = await asyncio.wait_for(cap_task, timeout=4.0)
+                except Exception:
+                    caps = fallback_captions(req.message, scene)
+                yield json.dumps({
+                    "type": "thinking",
+                    "scene": scene,
+                    "captions": caps,
+                }, ensure_ascii=False).encode() + b"\n"
+
             try:
                 # Отдаём текст построчно: так строка «Подробнее: …», которую
                 # написала модель, всегда видна целиком и может быть вычищена.
@@ -468,6 +516,9 @@ async def chat(req: ChatRequest):
                 cur = ""
                 async for ev in llm.chat_stream(messages):
                     if ev["type"] == "content":
+                        # Подписи показываются перед первым текстом ответа.
+                        async for chunk in emit_captions():
+                            yield chunk
                         delta = ev["delta"]
                         full += ev["delta"]
                         cur += delta
@@ -518,6 +569,9 @@ async def chat(req: ChatRequest):
                                 "type": "replace",
                                 "text": "",
                             }, ensure_ascii=False).encode() + b"\n"
+                        # Подписи «размышления» — и в fallback-ветке.
+                        async for chunk in emit_captions():
+                            yield chunk
                         if decision.page:
                             phone = get_index().data.get("phone", "+7 (4822) 41-57-68")
                             # Ответ строится из самого материала (выдержки из
@@ -606,6 +660,11 @@ async def chat(req: ChatRequest):
                             "type": "content",
                             "delta": out,
                         }, ensure_ascii=False).encode() + b"\n"
+
+                # Если модель не отдала ни одного контент-чанка — подписи
+                # «размышления» всё равно показываем (фронт ждёт их).
+                async for chunk in emit_captions():
+                    yield chunk
 
                 # Финальную ссылку формирует система — ровно одна и правильная.
                 link_line = ensure_link("", decision)

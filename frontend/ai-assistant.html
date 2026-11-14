@@ -7,22 +7,26 @@
 <meta name="description" content="Задайте вопрос о кадастровых работах, документах и законодательстве — ответит виртуальный ассистент 2КАД.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root{
     --bg:#FAFAF9;
-    --ink:#17181A;
+    --ink:#18181B;
     --ink-2:#4B5158;
     --muted:#8A9099;
     --line:#E6E4E0;
     --line-2:#F1EFEB;
     --accent:#CC2C2C;
-    --max:720px;
+    --accent-soft:#FDF1F1;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --max:760px;
   }
 
   *,*::before,*::after{box-sizing:border-box}
 
-  html,body{height:100%;overflow:hidden}
+  /* Страница растёт по содержимому: прокручивается вся страница 2kad.ru,
+     а не окно чата. Родитель подстраивает высоту iframe по postMessage. */
+  html,body{height:auto;overflow:hidden}
   body{
     margin:0;
     background:var(--bg);
@@ -32,24 +36,26 @@
     line-height:1.6;
     -webkit-font-smoothing:antialiased;
     text-rendering:optimizeLegibility;
+    /* координатная сетка — «технический» подложка */
+    background-image:
+      linear-gradient(to right,rgba(24,24,27,.035) 1px,transparent 1px),
+      linear-gradient(to bottom,rgba(24,24,27,.035) 1px,transparent 1px);
+    background-size:34px 34px;
+    background-position:-1px -1px;
   }
 
   /* ---------- каркас ---------- */
-  /* Страница статична: прокрутки страницы нет никогда. Прокручивается
-     только лента переписки — когда сообщений становится много. */
   .stage{
-    height:100vh;
-    height:100dvh;
-    max-height:100dvh;
-    overflow:hidden;
+    position:relative;
+    min-height:100dvh;
     display:flex;
     flex-direction:column;
     align-items:center;
     justify-content:center;
-    gap:clamp(20px,4vh,40px);
-    padding:clamp(20px,4vh,44px) 20px;
+    gap:clamp(22px,4vh,44px);
+    padding:clamp(20px,4vh,44px) 20px clamp(28px,6vh,56px);
   }
-  .stage.is-chat{justify-content:flex-start;gap:16px;padding-top:clamp(14px,3vh,28px)}
+  .stage.is-chat{justify-content:flex-start;gap:18px;padding-top:clamp(16px,3vh,30px)}
 
   .col{
     width:100%;
@@ -57,8 +63,51 @@
     margin:0 auto;
   }
 
+  /* ---------- служебная строка ---------- */
+  .bar{
+    width:100%;
+    max-width:var(--max);
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:16px;
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--muted);
+  }
+  .bar b{font-weight:500;color:var(--ink-2)}
+  .bar .l{color:var(--ink-2);font-weight:500}
+  .bar .r{display:flex;align-items:center;gap:14px}
+  .stat{display:flex;align-items:center;gap:7px;white-space:nowrap}
+  .dot{
+    width:6px;height:6px;border-radius:50%;
+    background:var(--accent);
+    flex:0 0 auto;
+  }
+  .dot.ok{background:#2E9E5B}
+  .dot.busy{animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.25}50%{opacity:1}}
+
+  .hair{
+    width:100%;
+    max-width:var(--max);
+    height:1px;
+    background:linear-gradient(to right,var(--line),rgba(230,228,224,0));
+  }
+
   /* ---------- шапка ---------- */
   .head{text-align:center;flex:0 0 auto}
+  .head .eyebrow{
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.2em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin-bottom:14px;
+  }
+  .head .eyebrow i{font-style:normal;color:var(--accent)}
   .head h1{
     margin:0;
     font-size:clamp(24px,4.4vw,34px);
@@ -67,34 +116,29 @@
     line-height:1.2;
   }
   .head p{
-    margin:10px 0 0;
+    margin:12px 0 0;
     color:var(--muted);
     font-size:15px;
     font-weight:400;
   }
 
   /* ---------- лента диалога ---------- */
-  /* Единственный прокручиваемый блок на странице. min-height:0 обязателен —
-     иначе flex-элемент не сжимается, лента растёт и страница едет вниз. */
+  /* Обычный поток: лента растёт, страницу прокручивает пользователь. */
   .log{
     display:none;
     width:100%;
     max-width:var(--max);
-    flex:1 1 auto;
-    min-height:0;
-    overflow-y:auto;
-    overscroll-behavior:contain;
-    padding:4px 0 8px;
-    scrollbar-width:thin;
+    flex:0 0 auto;
+    padding:2px 0 6px;
   }
   .stage.is-chat .log{display:block}
 
-  .turn{margin:0 0 26px}
+  .turn{margin:0 0 30px}
   .ask{
-    margin:0 0 12px auto;
-    max-width:82%;
+    margin:0 0 14px auto;
+    max-width:84%;
     width:max-content;
-    padding:10px 16px;
+    padding:11px 16px;
     border-radius:14px;
     background:#F1EFEB;
     color:var(--ink);
@@ -103,6 +147,31 @@
     white-space:pre-wrap;
     word-break:break-word;
   }
+  .askmeta{
+    display:block;
+    font-family:var(--mono);
+    font-size:10.5px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin-bottom:6px;
+    text-align:right;
+  }
+  .saywrap{
+    position:relative;
+    padding-left:16px;
+    border-left:1px solid var(--line);
+  }
+  .saymeta{
+    display:block;
+    font-family:var(--mono);
+    font-size:10.5px;
+    letter-spacing:.14em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin-bottom:8px;
+  }
+  .saymeta b{font-weight:500;color:var(--ink-2)}
   .say{
     margin:0;
     max-width:100%;
@@ -123,15 +192,149 @@
   }
   .say a:hover{color:var(--accent);text-decoration-color:var(--accent)}
 
-  .dots{display:inline-flex;gap:5px;align-items:center;padding:4px 0}
-  .dots i{
-    width:6px;height:6px;border-radius:50%;
-    background:#C9C5BF;
-    animation:blink 1.25s infinite ease-in-out;
+  /* ---------- «размышление» ---------- */
+  .think{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    margin:2px 0 14px;
+    padding:12px 14px;
+    border:1px solid var(--line);
+    border-radius:12px;
+    background:linear-gradient(180deg,#fff,rgba(255,255,255,.4));
   }
-  .dots i:nth-child(2){animation-delay:.18s}
-  .dots i:nth-child(3){animation-delay:.36s}
-  @keyframes blink{0%,80%,100%{opacity:.25;transform:translateY(0)}40%{opacity:1;transform:translateY(-2px)}}
+  .think__viz{
+    width:56px;height:56px;flex:0 0 auto;
+    color:var(--ink);
+  }
+  .think__viz svg{width:100%;height:100%;display:block;overflow:visible}
+  .think__txt{min-width:0}
+  .think__cap{
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.12em;
+    text-transform:uppercase;
+    color:var(--muted);
+    margin-bottom:5px;
+  }
+  .think__line{
+    font-size:14.5px;
+    line-height:1.45;
+    color:var(--ink-2);
+    min-height:1.45em;
+    transition:opacity .28s ease,transform .28s ease;
+  }
+  .think__line.swap{opacity:0;transform:translateY(4px)}
+
+  /* анимации сцен */
+  @keyframes dashmove{to{stroke-dashoffset:-120}}
+  @keyframes rise{0%{transform:translateY(0)}100%{transform:translateY(-4px)}}
+  @keyframes scanline{0%{transform:translateY(0)}100%{transform:translateY(46px)}}
+  @keyframes sweep{to{transform:rotate(360deg)}}
+  @keyframes fill{0%{transform:scaleX(.05)}60%{transform:scaleX(1)}100%{transform:scaleX(1)}}
+  @keyframes stamp{0%{opacity:0;transform:rotate(-14deg) scale(1.6)}70%{opacity:1;transform:rotate(-14deg) scale(1)}100%{opacity:1;transform:rotate(-14deg) scale(1)}}
+  @keyframes blinkdot{0%,100%{opacity:.2}50%{opacity:1}}
+  @keyframes pulsept{0%,100%{r:1.6;opacity:.45}50%{r:2.6;opacity:1}}
+
+  .sc .grid{stroke:var(--line);stroke-width:1}
+  .sc .shape{fill:none;stroke:var(--ink);stroke-width:1.6;stroke-linejoin:round}
+  .sc .shape-dash{fill:none;stroke:var(--accent);stroke-width:1.4;stroke-dasharray:5 4;animation:dashmove 3.6s linear infinite}
+  .sc .thin{fill:none;stroke:var(--muted);stroke-width:1}
+  .sc .soft{fill:var(--line-2)}
+  .sc .accent-fill{fill:var(--accent);opacity:.12}
+  .sc .pt{fill:var(--accent);animation:pulsept 2.4s ease-in-out infinite}
+  .sc .pt2{fill:var(--ink);opacity:.55}
+  .sc .scan{stroke:var(--accent);stroke-width:1.2;animation:scanline 2.8s ease-in-out infinite alternate}
+  .sc .rot{transform-origin:36px 36px;animation:sweep 3.4s linear infinite}
+  .sc .water{fill:var(--accent);opacity:.16;animation:rise 2.6s ease-in-out infinite alternate}
+  .sc .bar-fill{fill:var(--accent);opacity:.5;transform-origin:0 36px;animation:fill 2.8s ease-in-out infinite}
+  .sc .seal{fill:none;stroke:var(--accent);stroke-width:1.4;opacity:.85;animation:stamp 2.6s ease-out infinite}
+  .sc .line{stroke:var(--muted);stroke-width:1.2;stroke-linecap:round}
+  .sc .line-f{fill:var(--line-2)}
+
+  /* ---------- подсказки ---------- */
+  .hints{
+    width:100%;
+    max-width:var(--max);
+    flex:0 0 auto;
+    transition:opacity .3s ease;
+  }
+  .stage.is-chat .hints{display:none}
+
+  .chips{
+    display:flex;
+    flex-wrap:wrap;
+    gap:8px;
+    justify-content:center;
+  }
+  .chip{
+    appearance:none;
+    border:1px solid var(--line);
+    background:rgba(255,255,255,.7);
+    color:var(--ink-2);
+    border-radius:999px;
+    padding:8px 15px 8px 12px;
+    font-family:inherit;
+    font-size:14px;
+    line-height:1.3;
+    cursor:pointer;
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    transition:border-color .16s ease,color .16s ease,background .16s ease;
+  }
+  .chip em{
+    font-family:var(--mono);
+    font-style:normal;
+    font-size:10px;
+    letter-spacing:.1em;
+    color:var(--muted);
+  }
+  .chip:hover{border-color:#C9C5BF;color:var(--ink);background:#fff}
+  .chip:hover em{color:var(--accent)}
+
+  .topics{
+    margin-top:34px;
+    padding-top:26px;
+    border-top:1px solid var(--line-2);
+  }
+  .topics h2{
+    margin:0 0 18px;
+    font-family:var(--mono);
+    font-size:11px;
+    font-weight:500;
+    letter-spacing:.16em;
+    text-transform:uppercase;
+    color:var(--muted);
+    text-align:center;
+  }
+  .topics ul{
+    list-style:none;
+    margin:0;
+    padding:0;
+    display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:22px 34px;
+  }
+  .topics li{min-width:0;position:relative;padding-left:14px}
+  .topics li::before{
+    content:"";
+    position:absolute;left:0;top:.62em;
+    width:6px;height:1px;
+    background:var(--accent);
+  }
+  .topics b{
+    display:block;
+    font-weight:600;
+    font-size:15px;
+    margin-bottom:3px;
+  }
+  .topics span{
+    display:block;
+    font-size:13.5px;
+    color:var(--muted);
+    line-height:1.5;
+  }
 
   /* ---------- строка ввода ---------- */
   .composer{
@@ -176,73 +379,14 @@
   .composer button:active{transform:scale(.94)}
   .composer button svg{display:block}
   .composer button:disabled{opacity:.35;cursor:default}
-
-  /* ---------- подсказки ---------- */
-  .hints{
-    width:100%;
-    max-width:var(--max);
-    min-height:0;
-    overflow-y:auto;
-    overscroll-behavior:contain;
-    transition:opacity .3s ease,max-height .35s ease;
-  }
-  .stage.is-chat .hints{display:none}
-
-  .chips{
-    display:flex;
-    flex-wrap:wrap;
-    gap:8px;
-    justify-content:center;
-  }
-  .chip{
-    appearance:none;
-    border:1px solid var(--line);
-    background:transparent;
-    color:var(--ink-2);
-    border-radius:999px;
-    padding:8px 15px;
-    font-family:inherit;
-    font-size:14px;
-    line-height:1.3;
-    cursor:pointer;
-    transition:border-color .16s ease,color .16s ease,background .16s ease;
-  }
-  .chip:hover{border-color:#C9C5BF;color:var(--ink);background:#fff}
-
-  .topics{
-    margin-top:34px;
-    padding-top:26px;
-    border-top:1px solid var(--line-2);
-  }
-  .topics h2{
-    margin:0 0 16px;
-    font-size:12px;
-    font-weight:600;
-    letter-spacing:.14em;
+  .composer__hint{
+    display:block;
+    font-family:var(--mono);
+    font-size:10.5px;
+    letter-spacing:.12em;
     text-transform:uppercase;
-    color:var(--muted);
-    text-align:center;
-  }
-  .topics ul{
-    list-style:none;
-    margin:0;
-    padding:0;
-    display:grid;
-    grid-template-columns:repeat(2,minmax(0,1fr));
-    gap:22px 34px;
-  }
-  .topics li{min-width:0}
-  .topics b{
-    display:block;
-    font-weight:600;
-    font-size:15px;
-    margin-bottom:3px;
-  }
-  .topics span{
-    display:block;
-    font-size:13.5px;
-    color:var(--muted);
-    line-height:1.5;
+    color:#B6B2AC;
+    margin-top:10px;
   }
 
   .foot{
@@ -251,15 +395,22 @@
     flex:0 0 auto;
     text-align:center;
     color:#B6B2AC;
-    font-size:12.5px;
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:.06em;
   }
+  .foot span{opacity:.8}
 
   /* ---------- адаптив ---------- */
   @media (max-width:640px){
-    .stage{gap:24px;padding:22px 16px}
+    .stage{gap:24px;padding:22px 16px 34px}
     .topics ul{grid-template-columns:1fr;gap:16px}
     .topics{margin-top:26px;padding-top:20px}
     .ask{max-width:92%}
+    .bar{font-size:10px;gap:8px}
+    .bar .r{gap:9px}
+    .think{padding:10px 12px;gap:11px}
+    .think__viz{width:46px;height:46px}
   }
 
   @media (prefers-reduced-motion:reduce){
@@ -271,7 +422,18 @@
 
 <div class="stage" id="stage">
 
+  <div class="bar col">
+    <span class="l">2КАД · <b>Ассистент</b></span>
+    <span class="r">
+      <span class="stat" id="st-base">База · <b>—</b></span>
+      <span class="stat"><span class="dot ok" id="st-dot"></span><span id="st-text">Готов</span></span>
+    </span>
+  </div>
+
+  <div class="hair"></div>
+
   <header class="head col">
+    <div class="eyebrow">Кадастр · Документы · Закон</div>
     <h1>Ассистент 2КАД</h1>
     <p>Спросите о кадастре, документах или законе — отвечу по делу и подскажу следующий шаг.</p>
   </header>
@@ -280,11 +442,11 @@
 
   <div class="hints" id="hints">
     <div class="chips" id="chips">
-      <button class="chip" type="button">Сколько стоит межевание участка?</button>
-      <button class="chip" type="button">Какие документы нужны для техплана?</button>
-      <button class="chip" type="button">Что изменилось в приказах Росреестра?</button>
-      <button class="chip" type="button">Проверить участок на затопление</button>
-      <button class="chip" type="button">Как объединить два участка?</button>
+      <button class="chip" type="button"><em>01</em>Сколько стоит межевание участка?</button>
+      <button class="chip" type="button"><em>02</em>Какие документы нужны для техплана?</button>
+      <button class="chip" type="button"><em>03</em>Что изменилось в приказах Росреестра?</button>
+      <button class="chip" type="button"><em>04</em>Проверить участок на затопление</button>
+      <button class="chip" type="button"><em>05</em>Как объединить два участка?</button>
     </div>
 
     <div class="topics">
@@ -304,7 +466,7 @@
         </li>
         <li>
           <b>Проверка участка</b>
-          <span>Затопление, кадастровая стоимость, что государство знает о вашем объекте.</span>
+          <span> затопление, кадастровая стоимость, что государство знает о вашем объекте.</span>
         </li>
       </ul>
     </div>
@@ -320,9 +482,12 @@
         </svg>
       </button>
     </form>
+    <span class="composer__hint">Enter — отправить · Тверь и область · 56.8587 N 35.9176 E</span>
   </div>
 
-  <div class="foot">ООО «Центр Недвижимости 2кад» · Тверь · +7 (4822) 41-57-68</div>
+  <div class="foot">
+    <span>ООО «Центр Недвижимости 2кад» · Тверь · +7 (4822) 41-57-68</span>
+  </div>
 
 </div>
 
@@ -336,8 +501,54 @@ var form    = document.getElementById('form');
 var input   = document.getElementById('q');
 var send    = document.getElementById('send');
 var chips   = document.getElementById('chips');
+var stDot   = document.getElementById('st-dot');
+var stText  = document.getElementById('st-text');
 
 var started = false;
+var qn = 0;
+
+/* ── родительское окно (страница 2kad.ru) ──────────────────────────────
+   Чат встроен в сайт через iframe. Родителю нужны: высота содержимого
+   (чтобы прокручивалась страница, а не окно чата) и текст вопроса
+   (внутренний журнал). Отправляем через postMessage.                    */
+var EMBEDDED = window.parent && window.parent !== window;
+var PARENT_ORIGIN = (function () {
+  try {
+    if (!document.referrer) return '*';
+    return new URL(document.referrer).origin;
+  } catch (e) { return '*'; }
+})();
+
+function toParent(msg) {
+  if (!EMBEDDED) return;
+  try { window.parent.postMessage(msg, PARENT_ORIGIN); } catch (e) {}
+}
+
+var lastHeight = 0;
+function reportHeight(){
+  // Замер по обоим корням: при overflow:hidden scrollHeight одного из них
+  // может не отражать всю высоту содержимого.
+  var h = Math.ceil(Math.max(
+    document.documentElement.scrollHeight,
+    document.body ? document.body.scrollHeight : 0
+  ));
+  if (h !== lastHeight){
+    lastHeight = h;
+    toParent({ type: 'skp-ai-height', height: h });
+  }
+}
+if (window.ResizeObserver) {
+  new ResizeObserver(reportHeight).observe(document.documentElement);
+}
+window.addEventListener('resize', reportHeight);
+window.addEventListener('load', reportHeight);
+reportHeight();
+
+/* ── состояние ─────────────────────────────────────────────────────── */
+function setStatus(busy, text) {
+  stDot.className = 'dot ' + (busy ? 'busy' : 'ok');
+  stText.textContent = text;
+}
 
 function esc(s){
   return String(s).replace(/[&<>"']/g, function(c){
@@ -352,29 +563,128 @@ function md(s){
     .replace(/\n/g, '<br>');
 }
 
+function stamp(){
+  var d = new Date();
+  var p = function(n){ return (n<10?'0':'')+n; };
+  return p(d.getHours())+':'+p(d.getMinutes());
+}
+
+/* ── сцены «размышления» ──────────────────────────────────────────────
+   Шесть анимаций на тему кадастра и недвижимости. Выбор — по теме
+   вопроса (сцену присылает сервер).                                   */
+var SCENES = {
+  plan:
+    '<svg viewBox="0 0 72 72" class="sc">' +
+      '<path class="grid" d="M0 18h72M0 36h72M0 54h72M18 0v72M36 0v72M54 0v72"/>' +
+      '<path class="shape" d="M12 50 L24 16 L54 22 L62 48 L34 60 Z"/>' +
+      '<path class="shape-dash" d="M12 50 L24 16 L54 22 L62 48 L34 60 Z"/>' +
+      '<circle class="pt" cx="12" cy="50" r="1.8"/>' +
+      '<circle class="pt" cx="24" cy="16" r="1.8" style="animation-delay:.4s"/>' +
+      '<circle class="pt" cx="54" cy="22" r="1.8" style="animation-delay:.8s"/>' +
+      '<circle class="pt" cx="62" cy="48" r="1.8" style="animation-delay:1.2s"/>' +
+      '<circle class="pt" cx="34" cy="60" r="1.8" style="animation-delay:1.6s"/>' +
+    '</svg>',
+  flood:
+    '<svg viewBox="0 0 72 72" class="sc">' +
+      '<path class="grid" d="M0 18h72M0 36h72M0 54h72M18 0v72M36 0v72M54 0v72"/>' +
+      '<path class="shape" d="M14 54 L26 22 L52 26 L58 52 L32 62 Z"/>' +
+      '<rect class="water" x="0" y="44" width="72" height="28"/>' +
+      '<path class="thin" d="M0 44q9-4 18 0t18 0 18 0 18 0"/>' +
+      '<path class="thin" d="M0 52q9-4 18 0t18 0 18 0 18 0" opacity=".6"/>' +
+    '</svg>',
+  building:
+    '<svg viewBox="0 0 72 72" class="sc">' +
+      '<path class="grid" d="M0 18h72M0 36h72M0 54h72M18 0v72M36 0v72M54 0v72"/>' +
+      '<path class="shape" d="M18 62 V22 L36 12 L54 22 V62"/>' +
+      '<path class="thin" d="M18 34h36M18 46h36"/>' +
+      '<rect class="accent-fill" x="31" y="52" width="10" height="10"/>' +
+      '<circle class="pt" cx="36" cy="20" r="1.8"/>' +
+    '</svg>',
+  estimate:
+    '<svg viewBox="0 0 72 72" class="sc">' +
+      '<path class="grid" d="M0 18h72M0 36h72M0 54h72M18 0v72M36 0v72M54 0v72"/>' +
+      '<rect class="line-f" x="10" y="16" width="52" height="40" rx="3"/>' +
+      '<rect class="bar-fill" x="18" y="26" width="36" height="4" rx="2"/>' +
+      '<rect class="bar-fill" x="18" y="36" width="26" height="4" rx="2" style="animation-delay:.3s"/>' +
+      '<rect class="bar-fill" x="18" y="46" width="30" height="4" rx="2" style="animation-delay:.6s"/>' +
+    '</svg>',
+  law:
+    '<svg viewBox="0 0 72 72" class="sc">' +
+      '<path class="grid" d="M0 18h72M0 36h72M0 54h72M18 0v72M36 0v72M54 0v72"/>' +
+      '<rect class="line-f" x="16" y="10" width="34" height="48" rx="3"/>' +
+      '<path class="line" d="M23 22h20M23 30h20M23 38h13"/>' +
+      '<circle class="seal" cx="50" cy="48" r="13"/>' +
+      '<path class="thin" d="M44 48l4 4 9-9"/>' +
+    '</svg>',
+  survey:
+    '<svg viewBox="0 0 72 72" class="sc">' +
+      '<circle class="grid" cx="36" cy="36" r="30" fill="none" stroke="currentColor" stroke-opacity=".12"/>' +
+      '<circle class="grid" cx="36" cy="36" r="19" fill="none" stroke="currentColor" stroke-opacity=".12"/>' +
+      '<g class="rot"><path class="thin" d="M36 36 L36 8"/></g>' +
+      '<circle class="pt" cx="36" cy="36" r="2"/>' +
+      '<circle class="pt2" cx="20" cy="26" r="1.6"/>' +
+      '<circle class="pt2" cx="56" cy="44" r="1.6"/>' +
+      '<circle class="pt2" cx="28" cy="55" r="1.6"/>' +
+    '</svg>'
+};
+
 function addTurn(text){
+  qn += 1;
   var wrap = document.createElement('div');
   wrap.className = 'turn';
+
   var q = document.createElement('p');
   q.className = 'ask';
-  q.textContent = text;
+  var qm = document.createElement('span');
+  qm.className = 'askmeta';
+  qm.textContent = 'Вопрос ' + (qn<10?'0'+qn:qn) + ' · ' + stamp();
+  q.appendChild(qm);
+  q.appendChild(document.createTextNode(text));
   wrap.appendChild(q);
+
   log.appendChild(wrap);
-  log.scrollTop = log.scrollHeight;
+  reportHeight();
   return wrap;
 }
 
-function showTyping(){
+/* Блок «размышления»: анимация + сменяющиеся подписи. */
+function showThink(scene){
   var t = document.createElement('div');
-  t.className = 'turn';
-  t.innerHTML = '<div class="dots"><i></i><i></i><i></i></div>';
+  t.className = 'think';
+  t.innerHTML =
+    '<div class="think__viz">' + (SCENES[scene] || SCENES.survey) + '</div>' +
+    '<div class="think__txt">' +
+      '<span class="think__cap">Разбираю запрос</span>' +
+      '<div class="think__line" id="think-line">Собираю материал по базе 2КАД…</div>' +
+    '</div>';
   log.appendChild(t);
-  log.scrollTop = log.scrollHeight;
+  reportHeight();
   return t;
 }
 
-function hideTyping(node){
+var thinkTimer = null;
+function setCaptions(node, caps){
+  if (!node || !caps || !caps.length) return;
+  var line = node.querySelector('.think__line');
+  if (!line) return;
+  var i = 0;
+  line.textContent = caps[0];
+  clearInterval(thinkTimer);
+  thinkTimer = setInterval(function () {
+    i = (i + 1) % caps.length;
+    line.classList.add('swap');
+    setTimeout(function () {
+      line.textContent = caps[i];
+      line.classList.remove('swap');
+    }, 260);
+  }, 2300);
+}
+
+function hideThink(node){
+  clearInterval(thinkTimer);
+  thinkTimer = null;
   if (node && node.parentNode) node.parentNode.removeChild(node);
+  reportHeight();
 }
 
 function begin(){
@@ -382,6 +692,7 @@ function begin(){
   started = true;
   stage.classList.add('is-chat');
   input.focus();
+  reportHeight();
 }
 
 function tooTechnical(text){
@@ -395,9 +706,13 @@ function ask(text){
   begin();
   input.value = '';
   send.disabled = true;
+  setStatus(true, 'Ищу материал');
 
   var turn = addTurn(text);
-  var typing = showTyping();
+  var thinking = showThink('survey');
+
+  // Журнал вопросов — родителю (внутренний учёт на стороне сайта).
+  toParent({ type: 'skp-ai-question', text: text, session: sessionId, ts: Date.now() });
 
   fetch(API_BASE + '/chat', {
     method: 'POST',
@@ -411,23 +726,51 @@ function ask(text){
     var bubble = null;
     var acc = '';
     var failed = false;
+    var meta = null;
 
     function handle(ev){
-      if (ev.type === 'meta') return;
+      if (ev.type === 'meta'){
+        meta = ev;
+        // Метаданные ответа — для внутреннего журнала: видно, на какой
+        // материал ответил ассистент и в каком режиме.
+        toParent({
+          type: 'skp-ai-meta',
+          session: sessionId,
+          mode: ev.mode || '',
+          page_url: ev.link_url || ev.page_url || ''
+        });
+        return;
+      }
+      if (ev.type === 'thinking'){
+        if (thinking && thinking.parentNode){
+          var viz = thinking.querySelector('.think__viz');
+          if (viz && SCENES[ev.scene]) viz.innerHTML = SCENES[ev.scene];
+        }
+        setCaptions(thinking, ev.captions);
+        return;
+      }
       if (ev.type === 'content'){
         if (!bubble){
-          hideTyping(typing);
+          hideThink(thinking);
+          var wrap = document.createElement('div');
+          wrap.className = 'saywrap';
+          var m = document.createElement('span');
+          m.className = 'saymeta';
+          m.textContent = 'Ответ · ' + stamp();
+          wrap.appendChild(m);
           bubble = document.createElement('p');
           bubble.className = 'say';
-          turn.appendChild(bubble);
+          wrap.appendChild(bubble);
+          turn.appendChild(wrap);
         }
         acc += ev.delta || '';
         bubble.innerHTML = md(acc);
-        log.scrollTop = log.scrollHeight;
+        reportHeight();
       }
       else if (ev.type === 'replace'){
         acc = ev.text || '';
         if (bubble) bubble.innerHTML = md(acc);
+        reportHeight();
       }
       else if (ev.type === 'error'){
         failed = true;
@@ -455,7 +798,7 @@ function ask(text){
     }
 
     return pump().then(function(){
-      hideTyping(typing);
+      hideThink(thinking);
       if (!bubble){
         var p = document.createElement('p');
         p.className = 'say';
@@ -464,21 +807,33 @@ function ask(text){
             ? 'Не удалось подготовить ответ. Уточните вопрос или позвоните менеджеру: +7 (4822) 41-57-68.'
             : acc
         );
-        turn.appendChild(p);
+        var wrap2 = document.createElement('div');
+        wrap2.className = 'saywrap';
+        var m2 = document.createElement('span');
+        m2.className = 'saymeta';
+        m2.textContent = 'Ответ · ' + stamp();
+        wrap2.appendChild(m2);
+        wrap2.appendChild(p);
+        turn.appendChild(wrap2);
       } else if (tooTechnical(acc)){
         bubble.innerHTML = md(
           'Ответ не сформировался. Попробуйте переформулировать вопрос или позвоните менеджеру: +7 (4822) 41-57-68.'
         );
       }
-      log.scrollTop = log.scrollHeight;
+      setStatus(false, 'Готов');
+      reportHeight();
+      // Доскроллить родительскую страницу к свежему ответу.
+      toParent({ type: 'skp-ai-scroll-bottom' });
     });
   })
   .catch(function(){
-    hideTyping(typing);
+    hideThink(thinking);
     var p = document.createElement('p');
     p.className = 'say';
     p.textContent = 'Нет связи с ассистентом. Проверьте соединение или позвоните менеджеру: +7 (4822) 41-57-68.';
     turn.appendChild(p);
+    setStatus(false, 'Готов');
+    reportHeight();
   })
   .then(function(){
     send.disabled = !input.value.trim();
@@ -498,8 +853,17 @@ input.addEventListener('input', function(){
 chips.addEventListener('click', function(e){
   var chip = e.target.closest('.chip');
   if (!chip) return;
-  ask(chip.textContent);
+  ask(chip.textContent.replace(/^\d{2}\s*/,''));
 });
+
+/* Размер базы — в шапке (техническая деталь, обновляется один раз). */
+fetch(API_BASE + '/index-stats')
+  .then(function(r){ return r.json(); })
+  .then(function(d){
+    var el = document.querySelector('#st-base b');
+    if (el && d && d.pages) el.textContent = d.pages + ' док.';
+  })
+  .catch(function(){});
 </script>
 </body>
 </html>
