@@ -684,6 +684,7 @@ function addTurn(text){
    MIN_THINK_MS — иначе быстрый ответ гасит его раньше, чем подписи успевают
    смениться. */
 var MIN_THINK_MS = 3600;   // минимальное время показа блока
+var CAPS_MIN_MS  = 4200;   // сколько блок живёт после прихода подписей
 var ROTATE_MS    = 1800;   // интервал смены подписи
 
 function showThink(turn){
@@ -721,6 +722,10 @@ function setCaptions(node, caps){
       line.classList.remove('swap');
     }, 260);
   }, ROTATE_MS);
+  // Подписи пришли — продлеваем жизнь блока, чтобы ротация успела
+  // показать несколько фраз, а не одну.
+  node.__capAt = Date.now();
+  if (node.parentNode) { scheduleHideThink(node); }
 }
 
 function hideThink(node){
@@ -731,12 +736,17 @@ function hideThink(node){
   reportHeight();
 }
 
-/* Отложенное скрытие: блок держится на экране минимум MIN_THINK_MS. */
+/* Отложенное скрытие: блок держится на экране минимум MIN_THINK_MS с
+   начала запроса и ещё CAPS_MIN_MS после прихода подписей — иначе ротация
+   успевает показать только одну фразу. */
 function scheduleHideThink(node){
   if (!node) return;
   if (thinkHideTimer){ clearTimeout(thinkHideTimer); thinkHideTimer = null; }
-  var spent = Date.now() - (node.__t0 || Date.now());
-  var wait = Math.max(0, MIN_THINK_MS - spent);
+  var deadline = (node.__t0 || Date.now()) + MIN_THINK_MS;
+  if (node.__capAt){
+    deadline = Math.max(deadline, node.__capAt + CAPS_MIN_MS);
+  }
+  var wait = Math.max(0, deadline - Date.now());
   if (wait <= 0){ hideThink(node); return; }
   thinkHideTimer = setTimeout(function(){
     thinkHideTimer = null;
