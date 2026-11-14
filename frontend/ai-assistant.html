@@ -55,7 +55,12 @@
     gap:clamp(22px,4vh,44px);
     padding:clamp(20px,4vh,44px) 20px clamp(28px,6vh,56px);
   }
-  .stage.is-chat{justify-content:flex-start;gap:18px;padding-top:clamp(16px,3vh,30px)}
+  .stage.is-chat{justify-content:flex-start;gap:16px;padding-top:clamp(16px,3vh,30px)}
+  /* В режиме диалога остаются строка, поле ввода и лента — заголовок и
+     подсказки уступают место переписке. */
+  .stage.is-chat .head,
+  .stage.is-chat .topics,
+  .stage.is-chat .hints{display:none}
 
   .col{
     width:100%;
@@ -81,6 +86,7 @@
   .bar .l{color:var(--ink-2);font-weight:500}
   .bar .r{display:flex;align-items:center;gap:14px}
   .stat{display:flex;align-items:center;gap:7px;white-space:nowrap}
+  .clock{color:var(--muted);opacity:.75}
   .dot{
     width:6px;height:6px;border-radius:50%;
     background:var(--accent);
@@ -194,6 +200,7 @@
 
   /* ---------- «размышление» ---------- */
   .think{
+    position:relative;
     display:flex;
     align-items:center;
     gap:14px;
@@ -202,6 +209,30 @@
     border:1px solid var(--line);
     border-radius:12px;
     background:linear-gradient(180deg,#fff,rgba(255,255,255,.4));
+  }
+  /* угловые метки «прицела» — техничная рамка вокруг работающего блока */
+  .think::before,.think::after{
+    content:"";
+    position:absolute;
+    width:11px;height:11px;
+    border:1px solid rgba(204,44,44,.42);
+    pointer-events:none;
+  }
+  .think::before{left:-1px;top:-1px;border-right:0;border-bottom:0;border-radius:12px 0 0 0}
+  .think::after{right:-1px;bottom:-1px;border-left:0;border-top:0;border-radius:0 0 12px 0}
+  /* бегущий блик — «сканирование» материала */
+  .think__scan{
+    position:absolute;
+    left:0;right:0;top:0;height:100%;
+    pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(204,44,44,.06),transparent);
+    transform:translateX(-100%);
+    animation:thinkSweep 3.4s ease-in-out infinite;
+  }
+  @keyframes thinkSweep{
+    0%{transform:translateX(-100%)}
+    55%{transform:translateX(0)}
+    100%{transform:translateX(100%)}
   }
   .think__viz{
     width:56px;height:56px;flex:0 0 auto;
@@ -425,6 +456,7 @@
   <div class="bar col">
     <span class="l">2КАД · <b>Ассистент</b></span>
     <span class="r">
+      <span class="stat clock" id="st-clock">--:--:--</span>
       <span class="stat" id="st-base">База · <b>—</b></span>
       <span class="stat"><span class="dot ok" id="st-dot"></span><span id="st-text">Готов</span></span>
     </span>
@@ -448,28 +480,6 @@
       <button class="chip" type="button"><em>04</em>Проверить участок на затопление</button>
       <button class="chip" type="button"><em>05</em>Как объединить два участка?</button>
     </div>
-
-    <div class="topics">
-      <h2>Какие ответы я могу дать</h2>
-      <ul>
-        <li>
-          <b>Стоимость и сроки</b>
-          <span>Предварительный расчёт по вашему объекту и виду работ.</span>
-        </li>
-        <li>
-          <b>Документы и процедура</b>
-          <span>Что нужно для межевания, техплана, оформления прав и ввода в эксплуатацию.</span>
-        </li>
-        <li>
-          <b>Законодательство</b>
-          <span>Приказы Росреестра, законы и судебная практика — что изменилось и как это применить.</span>
-        </li>
-        <li>
-          <b>Проверка участка</b>
-          <span> затопление, кадастровая стоимость, что государство знает о вашем объекте.</span>
-        </li>
-      </ul>
-    </div>
   </div>
 
   <div class="composer col">
@@ -483,6 +493,28 @@
       </button>
     </form>
     <span class="composer__hint">Enter — отправить · Тверь и область · 56.8587 N 35.9176 E</span>
+  </div>
+
+  <div class="topics" id="topics">
+    <h2>Какие ответы я могу дать</h2>
+    <ul>
+      <li>
+        <b>Стоимость и сроки</b>
+        <span>Предварительный расчёт по вашему объекту и виду работ.</span>
+      </li>
+      <li>
+        <b>Документы и процедура</b>
+        <span>Что нужно для межевания, техплана, оформления прав и ввода в эксплуатацию.</span>
+      </li>
+      <li>
+        <b>Законодательство</b>
+        <span>Приказы Росреестра, законы и судебная практика — что изменилось и как это применить.</span>
+      </li>
+      <li>
+        <b>Проверка участка</b>
+        <span>Затопление, кадастровая стоимость, что государство знает о вашем объекте.</span>
+      </li>
+    </ul>
   </div>
 
   <div class="foot">
@@ -647,22 +679,33 @@ function addTurn(text){
   return wrap;
 }
 
-/* Блок «размышления»: анимация + сменяющиеся подписи. */
-function showThink(scene){
+/* Блок «размышления»: анимация + сменяющиеся подписи.
+   Блок ставится между вопросом и ответом и держится на экране не меньше
+   MIN_THINK_MS — иначе быстрый ответ гасит его раньше, чем подписи успевают
+   смениться. */
+var MIN_THINK_MS = 3600;   // минимальное время показа блока
+var ROTATE_MS    = 1800;   // интервал смены подписи
+
+function showThink(turn){
   var t = document.createElement('div');
   t.className = 'think';
   t.innerHTML =
-    '<div class="think__viz">' + (SCENES[scene] || SCENES.survey) + '</div>' +
+    '<span class="think__scan"></span>' +
+    '<div class="think__viz">' + (SCENES.survey) + '</div>' +
     '<div class="think__txt">' +
       '<span class="think__cap">Разбираю запрос</span>' +
-      '<div class="think__line" id="think-line">Собираю материал по базе 2КАД…</div>' +
+      '<div class="think__line">Собираю материал по базе 2КАД…</div>' +
     '</div>';
-  log.appendChild(t);
+  t.__t0 = Date.now();
+  if (turn && turn.appendChild) turn.appendChild(t);
+  else log.appendChild(t);
   reportHeight();
   return t;
 }
 
 var thinkTimer = null;
+var thinkHideTimer = null;
+
 function setCaptions(node, caps){
   if (!node || !caps || !caps.length) return;
   var line = node.querySelector('.think__line');
@@ -677,14 +720,28 @@ function setCaptions(node, caps){
       line.textContent = caps[i];
       line.classList.remove('swap');
     }, 260);
-  }, 2300);
+  }, ROTATE_MS);
 }
 
 function hideThink(node){
   clearInterval(thinkTimer);
   thinkTimer = null;
+  if (thinkHideTimer){ clearTimeout(thinkHideTimer); thinkHideTimer = null; }
   if (node && node.parentNode) node.parentNode.removeChild(node);
   reportHeight();
+}
+
+/* Отложенное скрытие: блок держится на экране минимум MIN_THINK_MS. */
+function scheduleHideThink(node){
+  if (!node) return;
+  if (thinkHideTimer){ clearTimeout(thinkHideTimer); thinkHideTimer = null; }
+  var spent = Date.now() - (node.__t0 || Date.now());
+  var wait = Math.max(0, MIN_THINK_MS - spent);
+  if (wait <= 0){ hideThink(node); return; }
+  thinkHideTimer = setTimeout(function(){
+    thinkHideTimer = null;
+    hideThink(node);
+  }, wait);
 }
 
 function begin(){
@@ -709,7 +766,7 @@ function ask(text){
   setStatus(true, 'Ищу материал');
 
   var turn = addTurn(text);
-  var thinking = showThink('survey');
+  var thinking = showThink(turn);
 
   // Журнал вопросов — родителю (внутренний учёт на стороне сайта).
   toParent({ type: 'skp-ai-question', text: text, session: sessionId, ts: Date.now() });
@@ -751,7 +808,9 @@ function ask(text){
       }
       if (ev.type === 'content'){
         if (!bubble){
-          hideThink(thinking);
+          // Блок размышления не гасим сразу — он должен успеть показать
+          // подписи. Убираем его по таймеру, когда наберётся MIN_THINK_MS.
+          scheduleHideThink(thinking);
           var wrap = document.createElement('div');
           wrap.className = 'saywrap';
           var m = document.createElement('span');
@@ -798,7 +857,7 @@ function ask(text){
     }
 
     return pump().then(function(){
-      hideThink(thinking);
+      scheduleHideThink(thinking);
       if (!bubble){
         var p = document.createElement('p');
         p.className = 'say';
@@ -864,6 +923,19 @@ fetch(API_BASE + '/index-stats')
     if (el && d && d.pages) el.textContent = d.pages + ' док.';
   })
   .catch(function(){});
+
+/* Часы в служебной строке — деталь, как в приборной панели. */
+(function(){
+  var el = document.getElementById('st-clock');
+  if (!el) return;
+  function tick(){
+    var d = new Date();
+    var p = function(n){ return (n<10?'0':'')+n; };
+    el.textContent = p(d.getHours())+':'+p(d.getMinutes())+':'+p(d.getSeconds());
+  }
+  tick();
+  setInterval(tick, 1000);
+})();
 </script>
 </body>
 </html>
