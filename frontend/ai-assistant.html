@@ -593,6 +593,14 @@ function md(s){
   return esc(s)
     .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
     .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>')
+    /* Голые адреса 2КАД внутри ответа — в кликабельные ссылки. Исключаем
+       те, что уже стоят внутри href (их создала замена выше). */
+    .replace(/(?<!href=")(https?:\/\/(?:www\.)?2kad\.ru\/[^\s<>()"]+)/g, function (m) {
+      var u = m.replace(/[.,;:!?]+$/, '');
+      var tail = m.slice(u.length);
+      var label = u.replace(/^https?:\/\//, '');
+      return '<a href="' + u + '" target="_blank" rel="noopener">' + label + '</a>' + tail;
+    })
     .replace(/\n/g, '<br>');
 }
 
